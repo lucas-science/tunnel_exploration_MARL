@@ -55,14 +55,29 @@ def test_shared_reward_counts_new_cells(small_map):
     assert rewards == {"drone_0": 0.0, "drone_1": 0.0}
 
 
-def test_observation_window(small_map):
-    env = TunnelExplorationEnv(small_map, n_agents=2, view_radius=1)
+def test_ray_observation(small_map):
+    env = TunnelExplorationEnv(small_map, n_agents=2, view_range=2)
     obs, _ = env.reset(seed=0)
-    window = obs["drone_0"]
-    assert window.shape == (3, 3, 3)
-    np.testing.assert_array_equal(window[0], small_map.walls[0:3, 1:4])
-    assert window[1, 1, 1] == 1.0
-    assert window[2, 1, 1] == 1.0
+    assert obs["drone_0"].shape == (4 * 2 * 3 + 1,)
+    rays = obs["drone_0"][:-1].reshape(4, 2, 3)
+    np.testing.assert_array_equal(rays[0], [[1, 0, 0], [1, 0, 0]])
+    np.testing.assert_array_equal(rays[1], [[0, 0, 0], [0, 0, 0]])
+    np.testing.assert_array_equal(rays[2], [[0, 0, 0], [1, 0, 0]])
+    np.testing.assert_array_equal(rays[3], [[0, 0, 0], [1, 0, 0]])
+    assert obs["drone_0"][-1] == 1.0
+
+    obs, *_ = env.step({"drone_0": 0, "drone_1": 2})
+    rays = obs["drone_0"][:-1].reshape(4, 2, 3)
+    np.testing.assert_array_equal(rays[1], [[0, 1, 1], [0, 0, 0]])
+    assert obs["drone_0"][-1] == 0.0
+
+
+def test_vision_blocked_by_walls():
+    corridor = TunnelMap(walls=np.array([[0, 1, 0, 0]], dtype=np.int8), start=(0, 0))
+    env = TunnelExplorationEnv(corridor, n_agents=1, view_range=3)
+    obs, _ = env.reset(seed=0)
+    rays = obs["drone_0"][:-1].reshape(4, 3, 3)
+    np.testing.assert_array_equal(rays[3, :, 0], [1, 1, 1])
 
 
 def test_terminates_when_fully_explored(small_map):

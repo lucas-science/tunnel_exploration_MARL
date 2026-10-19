@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -13,7 +14,8 @@ AgentID = str
 ObsType = npt.NDArray[np.float32]
 
 MOVES = np.array([[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]], dtype=np.int64)
-N_CHANNELS = 3
+DIRECTIONS = MOVES[1:]
+N_CELL_FEATURES = 3
 
 
 class TunnelExplorationEnv(ParallelEnv[AgentID, ObsType, int]):
@@ -23,16 +25,18 @@ class TunnelExplorationEnv(ParallelEnv[AgentID, ObsType, int]):
         self,
         maps: TunnelMap | Sequence[TunnelMap],
         n_agents: int = 4,
-        view_radius: int = 3,
+        view_range: int = 3,
         max_steps: int = 500,
         step_penalty: float = 0.01,
+        reward_mode: Literal["grouped", "mixed"] = "grouped",
         reward_alpha: float = 0.5,
         render_mode: str | None = None,
     ) -> None:
         self.maps = [maps] if isinstance(maps, TunnelMap) else list(maps)
-        self.view_radius = view_radius
+        self.view_range = view_range
         self.max_steps = max_steps
         self.step_penalty = step_penalty
+        self.reward_mode = reward_mode
         self.reward_alpha = reward_alpha
         self.render_mode = render_mode
 
@@ -40,9 +44,9 @@ class TunnelExplorationEnv(ParallelEnv[AgentID, ObsType, int]):
         self._agent_index = {a: i for i, a in enumerate(self.possible_agents)}
         self.agents: list[AgentID] = []
 
-        size = 2 * view_radius + 1
+        obs_size = len(DIRECTIONS) * view_range * N_CELL_FEATURES + 1
         self._observation_space = spaces.Box(
-            0.0, 1.0, shape=(N_CHANNELS, size, size), dtype=np.float32
+            0.0, 1.0, shape=(obs_size,), dtype=np.float32
         )
         self._action_space = spaces.Discrete(len(MOVES))
 
@@ -80,7 +84,10 @@ class TunnelExplorationEnv(ParallelEnv[AgentID, ObsType, int]):
         dict[AgentID, bool],
         dict[AgentID, dict],
     ]:
-        rewards = self._grouped_reward(actions)
+        if self.reward_mode == "mixed":
+            rewards = self._mixed_reward(actions)
+        else:
+            rewards = self._grouped_reward(actions)
         self.n_steps += 1
         done = self.is_fully_explored()
         truncated = self.n_steps >= self.max_steps
@@ -132,8 +139,7 @@ class TunnelExplorationEnv(ParallelEnv[AgentID, ObsType, int]):
 
     def _get_new_explored_cells_by_agent(self, i: int, action: int) -> int:
         row, col = self.positions[i] + MOVES[action]
-        height, width = self.walls.shape
-        if 0 <= row < height and 0 <= col < width and self.walls[row, col] == 0:
+        if self._is_free(row, col):
             self.positions[i] = row, col
 
         cell = (self.positions[i, 0], self.positions[i, 1])
@@ -141,24 +147,32 @@ class TunnelExplorationEnv(ParallelEnv[AgentID, ObsType, int]):
         self.explored[cell] = True
         return int(is_new)
 
+    def _is_free(self, row: int, col: int) -> bool:
+        height, width = self.walls.shape
+        return 0 <= row < height and 0 <= col < width and self.walls[row, col] == 0
+
     def _observations(self) -> dict[AgentID, ObsType]:
-        r = self.view_radius
-        occupancy = np.zeros(self.walls.shape, dtype=np.float32)
-        np.add.at(occupancy, (self.positions[:, 0], self.positions[:, 1]), 1.0)
-        layers = np.stack(
-            [
-                np.pad(self.walls.astype(np.float32), r, constant_values=1.0),
-                np.pad(self.explored.astype(np.float32), r),
-                np.pad(occupancy, r),
-            ]
-        )
+        occupancy = np.zeros(self.walls.shape, dtype=np.int64)
+        np.add.at(occupancy, (self.positions[:, 0], self.positions[:, 1]), 1)
+
         observations = {}
         for agent in self.agents:
             row, col = self.positions[self._agent_index[agent]]
-            window = layers[:, row : row + 2 * r + 1, col : col + 2 * r + 1].copy()
-            window[2, r, r] -= 1.0
-            window[2] = np.minimum(window[2], 1.0)
-            observations[agent] = window
+            rays = np.zeros(
+                (len(DIRECTIONS), self.view_range, N_CELL_FEATURES), dtype=np.float32
+            )
+            for d, (d_row, d_col) in enumerate(DIRECTIONS):
+                for k in range(self.view_range):
+                    r, c = row + d_row * (k + 1), col + d_col * (k + 1)
+                    if not self._is_free(r, c):
+                        rays[d, k:, 0] = 1.0
+                        break
+                    rays[d, k, 1] = self.explored[r, c]
+                    rays[d, k, 2] = occupancy[r, c] > 0
+            shares_cell = float(occupancy[row, col] > 1)
+            observations[agent] = np.append(rays.ravel(), shares_cell).astype(
+                np.float32
+            )
         return observations
 
     def _infos(self) -> dict[AgentID, dict]:
