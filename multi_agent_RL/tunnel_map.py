@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import numpy.typing as npt
 
-MAPS_DIR = Path(__file__).resolve().parents[1] / "multi_agent" / "envs"
+MAPS_DIR = Path(__file__).resolve().parent / "envs"
 
 
 @dataclass(frozen=True)
