@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import benchmarl.experiment.experiment as benchmarl_experiment
 import torch
 from benchmarl.algorithms import (
     IppoConfig,
@@ -16,6 +17,7 @@ from benchmarl.models import GruConfig, MlpConfig
 
 from multi_agent_RL.benchmarl_task import TunnelTask
 from multi_agent_RL.tunnel_map import MAPS_DIR
+from multi_agent_RL.util import run_name
 
 ALGORITHMS = {
     "mappo": MappoConfig,
@@ -27,6 +29,8 @@ ALGORITHMS = {
 MODELS = {"mlp": MlpConfig, "gru": GruConfig}
 
 RUNS_DIR = Path(__file__).parent / "runs"
+
+benchmarl_experiment.generate_exp_name = run_name
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,7 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-interval", type=int, default=120_000)
     parser.add_argument("--checkpoint-interval", type=int, default=0)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--loggers", nargs="*", default=["csv"])
+    parser.add_argument("--loggers", nargs="*", default=["csv", "tensorboard"])
     parser.add_argument(
         "--device", default="cuda" if torch.cuda.is_available() else "cpu"
     )
