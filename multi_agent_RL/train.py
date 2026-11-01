@@ -56,6 +56,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-interval", type=int, default=0)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--loggers", nargs="*", default=["csv", "tensorboard"])
+    parser.add_argument("--sampling-device", default="cpu")
     parser.add_argument(
         "--device", default="cuda" if torch.cuda.is_available() else "cpu"
     )
@@ -77,6 +78,8 @@ def build_experiment(args: argparse.Namespace) -> Experiment:
 
     config = ExperimentConfig.get_from_yaml()
     config.train_device = args.device
+    config.sampling_device = args.sampling_device
+    config.buffer_device = args.sampling_device
     print(args.device)
     config.max_n_frames = args.frames
     config.on_policy_collected_frames_per_batch = args.frames_per_batch

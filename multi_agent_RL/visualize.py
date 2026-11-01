@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import random
 import tempfile
 from pathlib import Path
 from typing import cast
@@ -26,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("run", type=Path, help="dossier du run ou fichier .pt")
     map_names = sorted(p.name for p in MAPS_DIR.glob("*.csv"))
     parser.add_argument("--map", choices=map_names)
-    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--seed", type=int)
     parser.add_argument("--stochastic", action="store_true")
     parser.add_argument("--fps", type=int, default=10)
     parser.add_argument("--output", type=Path)
@@ -60,6 +61,7 @@ def run_episode(
     if map_name is not None:
         tunnel_env.set_maps(TunnelMap.from_name(map_name))
     env.set_seed(seed)
+    torch.manual_seed(seed)
 
     frames: list[Frame] = []
     exploration = (
@@ -141,6 +143,7 @@ def main() -> None:
     if not args.live:
         plt.switch_backend("Agg")
     checkpoint = find_checkpoint(args.run)
+    seed = args.seed if args.seed is not None else random.randrange(2**31)
 
     with tempfile.TemporaryDirectory() as tmp:
         experiment = Experiment.reload_from_file(
@@ -153,10 +156,13 @@ def main() -> None:
             },
         )
         frames, coverage, map_name = run_episode(
-            experiment, args.map, args.seed, args.stochastic
+            experiment, args.map, seed, args.stochastic
         )
 
-    print(f"{map_name} : {len(frames) - 1} steps, couverture finale {coverage[-1]:.1%}")
+    print(
+        f"{map_name} (seed {seed}) : {len(frames) - 1} steps, "
+        f"couverture finale {coverage[-1]:.1%}"
+    )
     animation = animate(
         frames, coverage, f"{checkpoint.parent.parent.name} — {map_name}"
     )
