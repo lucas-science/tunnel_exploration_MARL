@@ -47,6 +47,7 @@ def parse_args() -> argparse.Namespace:
         "--reward-mode", default="grouped", choices=["grouped", "mixed"]
     )
     parser.add_argument("--reward-alpha", type=float, default=0.5)
+    parser.add_argument("--hot-vector", action="store_true")
     parser.add_argument("--frames", type=int, default=3_000_000)
     parser.add_argument("--frames-per-batch", type=int, default=6000)
     parser.add_argument("--n-envs", type=int, default=120)
@@ -73,6 +74,7 @@ def build_experiment(args: argparse.Namespace) -> Experiment:
             "step_penalty": args.step_penalty,
             "reward_mode": args.reward_mode,
             "reward_alpha": args.reward_alpha,
+            "hot_vector": args.hot_vector,
         }
     )
 

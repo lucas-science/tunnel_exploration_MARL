@@ -34,6 +34,7 @@ class TunnelEnv(EnvBase):
         reward_alpha: float = 0.5,
         seed: int | None = None,
         device: DEVICE_TYPING = "cpu",
+        hot_vector: bool = False,
     ) -> None:
         if view_range < 1:
             raise ValueError("view_range must be >= 1")
@@ -46,7 +47,9 @@ class TunnelEnv(EnvBase):
         self.reward_mode = reward_mode
         self.reward_alpha = reward_alpha
         self.agent_names = [i for i in range(n_agents)]
-        self.obs_size = len(VIEW_DIRECTIONS) * view_range * len(CELL_FEATURES) + 1
+        self.hot_vector = hot_vector
+        self.rays_size = len(VIEW_DIRECTIONS) * view_range * len(CELL_FEATURES)
+        self.obs_size = self.rays_size + 1 + (n_agents if hot_vector else 0)
 
         self.set_maps(maps)
         self._make_specs()
@@ -86,6 +89,7 @@ class TunnelEnv(EnvBase):
         self.moves = MOVES.to(device)
         distances = torch.arange(1, self.view_range + 1, device=device)
         self.ray_offsets = self.moves[1:, None, :] * distances[None, :, None]
+        self.agent_ids = torch.eye(a, dtype=torch.bool, device=device)
 
     def _per_agent(self, key: str, spec: TensorSpec) -> Composite:
         n, a = self.num_envs, self.n_agents
@@ -215,7 +219,10 @@ class TunnelEnv(EnvBase):
 
         rows, cols = self.positions[..., 0], self.positions[..., 1]
         shares_cell = drone_counts[self.env_index[:, None], rows, cols] > 1
-        return torch.cat([rays, shares_cell.unsqueeze(-1)], dim=-1).float()
+        parts = [rays, shares_cell.unsqueeze(-1)]
+        if self.hot_vector:
+            parts.append(self.agent_ids.expand(self.num_envs, -1, -1))
+        return torch.cat(parts, dim=-1).float()
 
     def _observation_output(self) -> TensorDict:
         coverage = self.coverage().float()[:, None].expand(-1, self.n_agents)
@@ -254,7 +261,9 @@ class TunnelEnv(EnvBase):
         return "\n".join("".join(line) for line in chars)
 
     def describe_observation(self, obs: torch.Tensor) -> str:
-        rays = obs[:-1].view(len(VIEW_DIRECTIONS), self.view_range, len(CELL_FEATURES))
+        rays = obs[: self.rays_size].view(
+            len(VIEW_DIRECTIONS), self.view_range, len(CELL_FEATURES)
+        )
         lines = []
         for direction, ray in zip(VIEW_DIRECTIONS, rays, strict=True):
             blocked, explored, drone = ray.bool().unbind(-1)
@@ -263,5 +272,7 @@ class TunnelEnv(EnvBase):
                 for b, e, d in zip(blocked, explored, drone, strict=True)
             ]
             lines.append(f"{direction:>5}: {''.join(cells)}")
-        lines.append(f"shares cell: {bool(obs[-1])}")
+        lines.append(f"shares cell: {bool(obs[self.rays_size])}")
+        if self.hot_vector:
+            lines.append(f"agent id: {int(obs[self.rays_size + 1 :].argmax())}")
         return "\n".join(lines)

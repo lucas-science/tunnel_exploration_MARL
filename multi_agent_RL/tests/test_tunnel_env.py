@@ -171,3 +171,16 @@ def test_rollout_auto_resets():
     assert rollout.batch_size == (4, 100)
     assert rollout["next", "truncated"].sum() == 4 * 5
     assert int(env.n_steps.max()) <= 20
+
+
+def test_hot_vector(small_map):
+    env = TunnelEnv(small_map, num_envs=2, n_agents=3, view_range=2, hot_vector=True)
+    check_env_specs(env)
+    obs = env.reset()[GROUP, "observation"]
+    rays_size = 4 * 2 * 3
+    assert obs.shape == (2, 3, rays_size + 1 + 3)
+    assert obs[:, :, rays_size + 1 :].tolist() == [torch.eye(3).tolist()] * 2
+
+    plain = TunnelEnv(small_map, num_envs=2, n_agents=3, view_range=2)
+    plain_obs = plain.reset()[GROUP, "observation"]
+    assert torch.equal(obs[..., : rays_size + 1], plain_obs)
