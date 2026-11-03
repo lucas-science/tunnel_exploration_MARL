@@ -168,17 +168,34 @@ class TunnelEnv(EnvBase):
         return out
 
     def _move_agents(self, actions: torch.Tensor) -> torch.Tensor:
-        env = self.env_index
-        new_cells = torch.zeros(self.num_envs, self.n_agents, device=self.device)
-        for a in range(self.n_agents):
-            target = self.positions[:, a] + self.moves[actions[:, a]]
-            can_move = ~self.walls[env, target[:, 0], target[:, 1]]
-            self.positions[:, a] = torch.where(
-                can_move[:, None], target, self.positions[:, a]
-            )
-            row, col = self.positions[:, a, 0], self.positions[:, a, 1]
-            new_cells[:, a] = (~self.explored[env, row, col]).float()
-            self.explored[env, row, col] = True
+        env = self.env_index[:, None]
+        step = self.moves[actions]
+        target = self.positions + step
+        
+        is_hiting_wall = self.walls[env, target[..., 0], target[..., 1]]
+        wants_to_move = step.any(-1)
+        can_move = wants_to_move & ~is_hiting_wall
+
+        is_other_drone = ~self.agent_ids
+        targets_cell_of = (target[:, :, None] == self.positions[:, None]).all(-1)
+        targeted_by = targets_cell_of.transpose(1, 2)
+        is_swapping = (targets_cell_of & targeted_by & is_other_drone).any(-1)
+        can_move &= ~is_swapping
+
+        priority = torch.rand(self.num_envs, self.n_agents, generator=self.rng)
+        priority = priority.to(self.device)
+        other_has_priority = priority[:, None, :] > priority[:, :, None]
+
+        for _ in range(self.n_agents):
+            final_cell = torch.where(can_move[..., None], target, self.positions)
+            same_final_cell = (final_cell[:, :, None] == final_cell[:, None]).all(-1)
+            other_wins = ~can_move[:, None, :] | other_has_priority
+            is_cell_taken = (same_final_cell & is_other_drone & other_wins).any(-1)
+            can_move &= ~is_cell_taken
+        self.positions = torch.where(can_move[..., None], target, self.positions)
+        rows, cols = self.positions[..., 0], self.positions[..., 1]
+        new_cells = (~self.explored[env, rows, cols]).float()
+        self.explored[env, rows, cols] = True
         return new_cells
 
     def _rewards(self, new_cells: torch.Tensor) -> torch.Tensor:
