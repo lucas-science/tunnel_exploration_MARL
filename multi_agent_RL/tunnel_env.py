@@ -74,6 +74,7 @@ class TunnelEnv(EnvBase):
             [[m.start[0] + pad, m.start[1] + pad] for m in maps], device=self.device
         )
         self.map_n_tunnels = (~self.map_walls).flatten(1).sum(1)
+        self.map_diameters = torch.tensor([m.diameter for m in maps], device=self.device)
         self._init_state()
 
     def _init_state(self) -> None:
@@ -86,6 +87,8 @@ class TunnelEnv(EnvBase):
         self.n_tunnels = torch.ones(n, dtype=torch.long, device=device)
         self.positions = torch.zeros(n, a, 2, dtype=torch.long, device=device)
         self.n_steps = torch.zeros(n, dtype=torch.long, device=device)
+        self.patience = torch.ones(n, dtype=torch.long, device=device)
+        self.steps_without_discovery = torch.zeros_like(self.n_steps)
         self.moves = MOVES.to(device)
         distances = torch.arange(1, self.view_range + 1, device=device)
         self.ray_offsets = self.moves[1:, None, :] * distances[None, :, None]
@@ -147,15 +150,23 @@ class TunnelEnv(EnvBase):
         self.explored[idx] = False
         self.explored[idx, starts[:, 0], starts[:, 1]] = True
         self.n_steps[idx] = 0
+        self.patience[idx] = self.map_diameters[map_ids]
+        self.steps_without_discovery[idx] = 0
 
     def _step(self, tensordict: TensorDictBase) -> TensorDict:
         actions = tensordict.get((GROUP, "action")).long()
         new_cells = self._move_agents(actions)
         rewards = self._rewards(new_cells)
         self.n_steps += 1
+        discovered = new_cells.sum(-1) > 0
+        self.steps_without_discovery = torch.where(
+            discovered, 0, self.steps_without_discovery + 1
+        )
 
         terminated = self.is_fully_explored().unsqueeze(-1)
-        truncated = (self.n_steps >= self.max_steps).unsqueeze(-1)
+        out_of_time = self.n_steps >= self.max_steps
+        stalled = self.steps_without_discovery >= self.patience
+        truncated = (out_of_time | stalled).unsqueeze(-1)
         out = self._observation_output()
         out.set((GROUP, "reward"), rewards.unsqueeze(-1))
         out.update(
