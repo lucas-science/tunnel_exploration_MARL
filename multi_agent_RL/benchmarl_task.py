@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import cast
 
 from benchmarl.environments.common import Task, TaskClass
+from benchmarl.experiment import Experiment
 from benchmarl.utils import DEVICE_TYPING
 from tensordict import TensorDictBase
 from torchrl.data import Composite
@@ -21,6 +23,7 @@ class TunnelTaskClass(TaskClass):
         device: DEVICE_TYPING,
     ) -> Callable[[], EnvBase]:
         config = dict(self.config)
+        config.pop("eval_maps", None)
         maps = [TunnelMap.from_name(name) for name in config.pop("maps")]
         return lambda: TunnelEnv(
             maps, num_envs=num_envs, seed=seed, device=device, **config
@@ -83,3 +86,30 @@ class TunnelTask(Task):
     @staticmethod
     def associated_class():
         return TunnelTaskClass
+
+
+def unwrap(env: EnvBase) -> TunnelEnv:
+    while not isinstance(env, TunnelEnv):
+        env = cast(EnvBase, env.base_env)
+    return env
+
+
+class TunnelExperiment(Experiment):
+    def _setup_task(self) -> None:
+        super()._setup_task()
+        eval_maps = self.task.config.get("eval_maps")
+        if eval_maps:
+            test_env = unwrap(self.test_env)
+            test_env.set_maps([TunnelMap.from_name(name) for name in eval_maps])
+            test_env.fixed_maps = True
+
+    def _on_evaluation_end(self, rollouts: list[TensorDictBase]) -> None:
+        coverage = [
+            r.get(("next", GROUP, "info", "coverage"))[-1].float().mean()
+            for r in rollouts
+        ]
+        self.logger.log(
+            {"eval/coverage_at_episode_end": sum(coverage).item() / len(coverage)},
+            step=self.n_iters_performed,
+        )
+        super()._on_evaluation_end(rollouts)

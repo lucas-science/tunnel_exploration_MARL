@@ -48,6 +48,7 @@ class TunnelEnv(EnvBase):
         self.reward_alpha = reward_alpha
         self.agent_names = [i for i in range(n_agents)]
         self.hot_vector = hot_vector
+        self.fixed_maps = False
         self.rays_size = len(VIEW_DIRECTIONS) * view_range * len(CELL_FEATURES)
         self.obs_size = self.rays_size + 1 + (n_agents if hot_vector else 0)
 
@@ -74,7 +75,9 @@ class TunnelEnv(EnvBase):
             [[m.start[0] + pad, m.start[1] + pad] for m in maps], device=self.device
         )
         self.map_n_tunnels = (~self.map_walls).flatten(1).sum(1)
-        self.map_diameters = torch.tensor([m.diameter for m in maps], device=self.device)
+        self.map_diameters = torch.tensor(
+            [m.diameter for m in maps], device=self.device
+        )
         self._init_state()
 
     def _init_state(self) -> None:
@@ -139,9 +142,12 @@ class TunnelEnv(EnvBase):
     def _reset_envs(self, idx: torch.Tensor) -> None:
         if not len(idx):
             return
-        map_ids = torch.randint(
-            len(self.map_walls), (len(idx),), generator=self.rng
-        ).to(self.device)
+        if self.fixed_maps:
+            map_ids = idx % len(self.map_walls)
+        else:
+            map_ids = torch.randint(
+                len(self.map_walls), (len(idx),), generator=self.rng
+            ).to(self.device)
         starts = self.map_starts[map_ids]
         self.map_ids[idx] = map_ids
         self.walls[idx] = self.map_walls[map_ids]
@@ -182,7 +188,7 @@ class TunnelEnv(EnvBase):
         env = self.env_index[:, None]
         step = self.moves[actions]
         target = self.positions + step
-        
+
         is_hiting_wall = self.walls[env, target[..., 0], target[..., 1]]
         wants_to_move = step.any(-1)
         can_move = wants_to_move & ~is_hiting_wall

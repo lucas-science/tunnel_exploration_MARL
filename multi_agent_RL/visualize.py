@@ -4,7 +4,6 @@ import argparse
 import random
 import tempfile
 from pathlib import Path
-from typing import cast
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,10 +11,10 @@ import torch
 from benchmarl.experiment import Experiment
 from matplotlib.animation import FuncAnimation, PillowWriter
 from matplotlib.colors import ListedColormap
-from torchrl.envs import EnvBase
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 
-from multi_agent_RL.tunnel_env import GROUP, TunnelEnv
+from multi_agent_RL.benchmarl_task import unwrap
+from multi_agent_RL.tunnel_env import GROUP
 from multi_agent_RL.tunnel_map import TunnelMap, map_names
 
 Frame = tuple[np.ndarray, np.ndarray, np.ndarray]
@@ -44,12 +43,6 @@ def find_checkpoint(path: Path) -> Path:
     if not checkpoints:
         raise FileNotFoundError(f"Aucun checkpoint dans {path / 'checkpoints'}")
     return checkpoints[-1]
-
-
-def unwrap(env: EnvBase) -> TunnelEnv:
-    while not isinstance(env, TunnelEnv):
-        env = cast(EnvBase, env.base_env)
-    return env
 
 
 def run_episode(

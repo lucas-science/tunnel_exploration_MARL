@@ -15,10 +15,10 @@ from benchmarl.algorithms import (
     QmixConfig,
     VdnConfig,
 )
-from benchmarl.experiment import Experiment, ExperimentConfig
+from benchmarl.experiment import ExperimentConfig
 from benchmarl.models import GruConfig, MlpConfig
 
-from multi_agent_RL.benchmarl_task import TunnelTask
+from multi_agent_RL.benchmarl_task import TunnelExperiment, TunnelTask
 from multi_agent_RL.tunnel_map import resolve_maps
 from multi_agent_RL.util import run_name
 
@@ -39,6 +39,7 @@ benchmarl_experiment.generate_exp_name = run_name
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--maps", nargs="+", default=["train"])
+    parser.add_argument("--eval-maps", nargs="*", default=["val"])
     parser.add_argument("--algo", default="mappo", choices=ALGORITHMS)
     parser.add_argument("--model", default="mlp", choices=MODELS)
     parser.add_argument("--n-agents", type=int, default=4)
@@ -78,10 +79,12 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def build_experiment(args: argparse.Namespace) -> Experiment:
+def build_experiment(args: argparse.Namespace) -> TunnelExperiment:
+    eval_maps = resolve_maps(args.eval_maps)
     task = TunnelTask.TUNNEL.get_task(
         config={
             "maps": resolve_maps(args.maps),
+            "eval_maps": eval_maps,
             "n_agents": args.n_agents,
             "view_range": args.view_range,
             "max_steps": args.max_steps,
@@ -105,6 +108,8 @@ def build_experiment(args: argparse.Namespace) -> Experiment:
     config.on_policy_minibatch_size = min(args.minibatch_size, args.frames_per_batch)
     config.on_policy_n_minibatch_iters = args.epochs
     config.evaluation_interval = args.eval_interval
+    if eval_maps:
+        config.evaluation_episodes = len(eval_maps)
     config.render = False
     config.loggers = args.loggers
     config.checkpoint_interval = args.checkpoint_interval
@@ -116,7 +121,7 @@ def build_experiment(args: argparse.Namespace) -> Experiment:
     if hasattr(algorithm_config, "minibatch_advantage"):
         algorithm_config.minibatch_advantage = True
 
-    return Experiment(
+    return TunnelExperiment(
         task=task,
         algorithm_config=algorithm_config,
         model_config=MODELS[args.model].get_from_yaml(),
