@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
+
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 import benchmarl.experiment.experiment as benchmarl_experiment
 import torch
@@ -61,7 +64,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--device", default="cuda" if torch.cuda.is_available() else "cpu"
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.frames_per_batch % args.n_envs:
+        parser.error(
+            f"--frames-per-batch ({args.frames_per_batch}) must be a multiple of "
+            f"--n-envs ({args.n_envs}), e.g. {args.n_envs * 50}"
+        )
+    for name in ("eval_interval", "checkpoint_interval"):
+        if getattr(args, name) % args.frames_per_batch:
+            parser.error(
+                f"--{name.replace('_', '-')} ({getattr(args, name)}) must be a "
+                f"multiple of --frames-per-batch ({args.frames_per_batch})"
+            )
+    return args
 
 
 def build_experiment(args: argparse.Namespace) -> Experiment:
@@ -98,9 +113,13 @@ def build_experiment(args: argparse.Namespace) -> Experiment:
     RUNS_DIR.mkdir(exist_ok=True)
     config.save_folder = str(RUNS_DIR)
 
+    algorithm_config = ALGORITHMS[args.algo].get_from_yaml()
+    if hasattr(algorithm_config, "minibatch_advantage"):
+        algorithm_config.minibatch_advantage = True
+
     return Experiment(
         task=task,
-        algorithm_config=ALGORITHMS[args.algo].get_from_yaml(),
+        algorithm_config=algorithm_config,
         model_config=MODELS[args.model].get_from_yaml(),
         critic_model_config=MlpConfig.get_from_yaml(),
         seed=args.seed,
