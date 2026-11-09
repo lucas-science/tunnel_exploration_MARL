@@ -111,6 +111,9 @@ class TunnelEnv(EnvBase):
         self.observation_spec[GROUP]["info"] = Composite(
             {"coverage": Unbounded(shape=per_agent, device=dev)}, shape=per_agent
         )
+        self.observation_spec[GROUP]["action_mask"] = Categorical(
+            2, shape=per_agent + (len(ACTIONS),), dtype=torch.bool, device=dev
+        )
         self.action_spec = self._per_agent(
             "action", Categorical(len(ACTIONS), shape=per_agent, device=dev)
         )
@@ -209,6 +212,7 @@ class TunnelEnv(EnvBase):
             other_wins = ~can_move[:, None, :] | other_has_priority
             is_cell_taken = (same_final_cell & is_other_drone & other_wins).any(-1)
             can_move &= ~is_cell_taken
+        
         self.positions = torch.where(can_move[..., None], target, self.positions)
         rows, cols = self.positions[..., 0], self.positions[..., 1]
         new_cells = (~self.explored[env, rows, cols]).float()
@@ -258,6 +262,11 @@ class TunnelEnv(EnvBase):
             parts.append(self.agent_ids.expand(self.num_envs, -1, -1))
         return torch.cat(parts, dim=-1).float()
 
+    def _action_masks(self) -> torch.Tensor:
+        env = self.env_index[:, None, None]
+        targets = self.positions[:, :, None] + self.moves
+        return ~self.walls[env, targets[..., 0], targets[..., 1]]
+
     def _observation_output(self) -> TensorDict:
         coverage = self.coverage().float()[:, None].expand(-1, self.n_agents)
         return TensorDict(
@@ -265,6 +274,7 @@ class TunnelEnv(EnvBase):
                 GROUP: TensorDict(
                     {
                         "observation": self._observations(),
+                        "action_mask": self._action_masks(),
                         "info": {"coverage": coverage},
                     },
                     batch_size=(self.num_envs, self.n_agents),

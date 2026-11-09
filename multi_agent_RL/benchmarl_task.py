@@ -58,7 +58,7 @@ class TunnelTaskClass(TaskClass):
         return env.full_action_spec_unbatched
 
     def action_mask_spec(self, env: EnvBase) -> Composite | None:
-        return None
+        return self._group_spec(env, "action_mask")
 
     def log_info(self, batch: TensorDictBase) -> dict[str, float]:
         done = batch.get(("next", "done")).squeeze(-1)

@@ -70,6 +70,14 @@ def test_walls_block_moves(small_map):
     assert env.agent_positions()[0, 0].tolist() == [1, 2]
 
 
+def test_action_mask_forbids_walls(small_map):
+    env = TunnelEnv(small_map, n_agents=1)
+    mask = env.reset()[GROUP, "action_mask"][0, 0]
+    assert mask.tolist() == [True, False, True, True, True]
+    mask = act(env, [[3]])[GROUP, "action_mask"][0, 0]
+    assert mask.tolist() == [True, False, True, False, True]
+
+
 def test_open_border_blocks_moves():
     open_map = TunnelMap(
         walls=np.array([[0, 0, 0], [1, 1, 0]], dtype=np.int8), start=(0, 0), diameter=3
