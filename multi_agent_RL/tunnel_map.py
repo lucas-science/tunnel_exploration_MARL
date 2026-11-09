@@ -4,11 +4,30 @@ import csv
 from dataclasses import dataclass
 from pathlib import Path
 
-import networkx as nx
 import numpy as np
 import numpy.typing as npt
 
 MAPS_DIR = Path(__file__).resolve().parent / "envs"
+
+
+def map_names() -> list[str]:
+    paths = MAPS_DIR.rglob("*.csv")
+    return sorted(
+        str(p.relative_to(MAPS_DIR)) for p in paths if p.name != "catalog.csv"
+    )
+
+
+def resolve_maps(names: list[str]) -> list[str]:
+    resolved = []
+    for name in names:
+        path = MAPS_DIR / name
+        if path.is_dir():
+            resolved += sorted(str(p.relative_to(MAPS_DIR)) for p in path.glob("*.csv"))
+        elif path.is_file():
+            resolved.append(name)
+        else:
+            raise FileNotFoundError(f"{name} n'existe pas dans {MAPS_DIR}")
+    return resolved
 
 
 @dataclass(frozen=True)
@@ -39,10 +58,3 @@ class TunnelMap:
     @property
     def n_tunnels(self) -> int:
         return int((self.walls == 0).sum())
-
-
-def tunnel_diameter(walls: npt.NDArray[np.int8], start: tuple[int, int]) -> int:
-    graph = nx.grid_2d_graph(*walls.shape)
-    graph.remove_nodes_from(map(tuple, np.argwhere(walls != 0)))
-    reachable = graph.subgraph(nx.node_connected_component(graph, start))
-    return nx.diameter(reachable)

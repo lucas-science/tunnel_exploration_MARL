@@ -19,7 +19,7 @@ from benchmarl.experiment import Experiment, ExperimentConfig
 from benchmarl.models import GruConfig, MlpConfig
 
 from multi_agent_RL.benchmarl_task import TunnelTask
-from multi_agent_RL.tunnel_map import MAPS_DIR
+from multi_agent_RL.tunnel_map import resolve_maps
 from multi_agent_RL.util import run_name
 
 ALGORITHMS = {
@@ -38,8 +38,7 @@ benchmarl_experiment.generate_exp_name = run_name
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    map_names = sorted(p.name for p in MAPS_DIR.glob("*.csv"))
-    parser.add_argument("--maps", nargs="+", default=["map1.csv"], choices=map_names)
+    parser.add_argument("--maps", nargs="+", default=["train"])
     parser.add_argument("--algo", default="mappo", choices=ALGORITHMS)
     parser.add_argument("--model", default="mlp", choices=MODELS)
     parser.add_argument("--n-agents", type=int, default=4)
@@ -82,7 +81,7 @@ def parse_args() -> argparse.Namespace:
 def build_experiment(args: argparse.Namespace) -> Experiment:
     task = TunnelTask.TUNNEL.get_task(
         config={
-            "maps": args.maps,
+            "maps": resolve_maps(args.maps),
             "n_agents": args.n_agents,
             "view_range": args.view_range,
             "max_steps": args.max_steps,

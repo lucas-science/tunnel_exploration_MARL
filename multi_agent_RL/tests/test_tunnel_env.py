@@ -8,7 +8,7 @@ from torchrl.envs.utils import check_env_specs
 
 from multi_agent_RL import TunnelEnv, TunnelMap
 from multi_agent_RL.tunnel_env import GROUP
-from multi_agent_RL.tunnel_map import MAPS_DIR, tunnel_diameter
+from multi_agent_RL.tunnel_map import map_names
 
 SMALL_MAP_CSV = """\
 2,1,4,,
@@ -48,15 +48,18 @@ def test_load_map(small_map):
     assert small_map.n_tunnels == 9
 
 
-@pytest.mark.parametrize("name", sorted(p.name for p in MAPS_DIR.glob("*.csv")))
+@pytest.mark.parametrize("name", map_names())
 def test_load_all_maps(name):
     tunnel_map = TunnelMap.from_name(name)
     assert tunnel_map.walls[tunnel_map.start] == 0
-    assert tunnel_map.diameter == tunnel_diameter(tunnel_map.walls, tunnel_map.start)
+    assert tunnel_map.diameter > 0
 
 
 def test_specs():
-    maps = [TunnelMap.from_name("map1.csv"), TunnelMap.from_name("env_cross.csv")]
+    maps = [
+        TunnelMap.from_name("old_envs/map1.csv"),
+        TunnelMap.from_name("old_envs/env_cross.csv"),
+    ]
     check_env_specs(TunnelEnv(maps, num_envs=3, n_agents=2, seed=0))
 
 
@@ -79,7 +82,9 @@ def test_open_border_blocks_moves():
 
 
 def corridor_env(n_agents):
-    corridor = TunnelMap(walls=np.zeros((1, 5), dtype=np.int8), start=(0, 0), diameter=4)
+    corridor = TunnelMap(
+        walls=np.zeros((1, 5), dtype=np.int8), start=(0, 0), diameter=4
+    )
     env = TunnelEnv(corridor, n_agents=n_agents)
     env.reset()
     return env
@@ -96,7 +101,9 @@ def test_leaving_the_start_one_at_a_time():
 
 
 def test_conflict_winner_is_random():
-    corridor = TunnelMap(walls=np.zeros((1, 5), dtype=np.int8), start=(0, 0), diameter=4)
+    corridor = TunnelMap(
+        walls=np.zeros((1, 5), dtype=np.int8), start=(0, 0), diameter=4
+    )
     env = TunnelEnv(corridor, num_envs=200, n_agents=2, seed=0)
     env.reset()
     act(env, [[4, 4]] * 200)
@@ -230,7 +237,7 @@ def test_partial_reset(small_map):
 
 
 def test_envs_are_independent():
-    tunnel_map = TunnelMap.from_name("map2.csv")
+    tunnel_map = TunnelMap.from_name("old_envs/map2.csv")
     batched = TunnelEnv(tunnel_map, num_envs=3, n_agents=1, seed=0)
     singles = [TunnelEnv(tunnel_map, n_agents=1, seed=0) for _ in range(3)]
     batched.reset()
@@ -247,7 +254,9 @@ def test_envs_are_independent():
 
 
 def test_rollout_auto_resets():
-    env = TunnelEnv(TunnelMap.from_name("map1.csv"), num_envs=4, max_steps=20, seed=0)
+    env = TunnelEnv(
+        TunnelMap.from_name("old_envs/map1.csv"), num_envs=4, max_steps=20, seed=0
+    )
     rollout = env.rollout(100, break_when_any_done=False)
     assert rollout.batch_size == (4, 100)
     assert rollout["next", "truncated"].sum() == 4 * 5

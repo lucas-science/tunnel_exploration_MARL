@@ -16,7 +16,7 @@ from torchrl.envs import EnvBase
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 
 from multi_agent_RL.tunnel_env import GROUP, TunnelEnv
-from multi_agent_RL.tunnel_map import MAPS_DIR, TunnelMap
+from multi_agent_RL.tunnel_map import TunnelMap, map_names
 
 Frame = tuple[np.ndarray, np.ndarray, np.ndarray]
 CELL_COLORS = ListedColormap(["#d9d9d9", "#9fd8a0", "#2b2b2b"])
@@ -25,8 +25,7 @@ CELL_COLORS = ListedColormap(["#d9d9d9", "#9fd8a0", "#2b2b2b"])
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("run", type=Path, help="dossier du run ou fichier .pt")
-    map_names = sorted(p.name for p in MAPS_DIR.glob("*.csv"))
-    parser.add_argument("--map", choices=map_names)
+    parser.add_argument("--map", choices=map_names())
     parser.add_argument("--seed", type=int)
     parser.add_argument("--stochastic", action="store_true")
     parser.add_argument("--fps", type=int, default=10)
