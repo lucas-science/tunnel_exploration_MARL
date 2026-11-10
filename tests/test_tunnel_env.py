@@ -6,9 +6,8 @@ import torch
 from tensordict import TensorDict, TensorDictBase
 from torchrl.envs.utils import check_env_specs
 
-from multi_agent_RL import TunnelEnv, TunnelMap
-from multi_agent_RL.tunnel_env import GROUP
-from multi_agent_RL.tunnel_map import map_names
+from tunnel_env import GROUP, TunnelEnv
+from tunnel_map import TunnelMap, map_names
 
 SMALL_MAP_CSV = """\
 2,1,4,,
@@ -39,7 +38,7 @@ def rewards_of(out):
 
 
 def rays_of(obs, view_range):
-    return obs[:-1].reshape(4, view_range, 3)
+    return obs[:-1].reshape(4, view_range, 2)
 
 
 def test_load_map(small_map):
@@ -173,17 +172,48 @@ def test_mixed_reward(small_map):
 def test_ray_observation(small_map):
     env = TunnelEnv(small_map, n_agents=2, view_range=2)
     obs = env.reset()[GROUP, "observation"][0, 0]
-    assert obs.shape == (4 * 2 * 3 + 1,)
+    assert obs.shape == (4 * 2 * 2 + 1,)
     rays = rays_of(obs, 2)
-    assert rays[0].tolist() == [[1, 0, 0], [1, 0, 0]]
-    assert rays[1].tolist() == [[0, 0, 0], [0, 0, 0]]
-    assert rays[2].tolist() == [[0, 0, 0], [1, 0, 0]]
-    assert rays[3].tolist() == [[0, 0, 0], [1, 0, 0]]
+    assert rays[0].tolist() == [[1, 0], [1, 0]]
+    assert rays[1].tolist() == [[0, 0], [0, 0]]
+    assert rays[2].tolist() == [[0, 0], [1, 0]]
+    assert rays[3].tolist() == [[0, 0], [1, 0]]
     assert obs[-1] == 1.0
 
     obs = act(env, [[0, 2]])[GROUP, "observation"][0, 0]
-    assert rays_of(obs, 2)[1].tolist() == [[0, 1, 1], [0, 0, 0]]
+    assert rays_of(obs, 2)[1].tolist() == [[0, 1], [0, 0]]
     assert obs[-1] == 0.0
+
+
+def test_actor_does_not_see_explored_cells(small_map):
+    env = TunnelEnv(small_map, n_agents=1)
+    first = env.reset()[GROUP, "observation"].clone()
+    act(env, [[2]])
+    assert env.explored.sum() == 2
+    back = act(env, [[1]])[GROUP, "observation"]
+    assert torch.equal(first, back)
+
+
+def test_global_state_shows_explored_map(small_map):
+    env = TunnelEnv(small_map, n_agents=1, view_range=1, global_state=True)
+    state = env.reset()["state"][0]
+    assert state.shape == (7, 7, 3)
+    assert state[..., 1].nonzero().tolist() == [[2, 3]]
+    state = act(env, [[2]])["state"][0]
+    assert state[..., 0].equal(env.walls[0])
+    assert state[..., 1].nonzero().tolist() == [[2, 3], [3, 3]]
+    assert state[..., 2].nonzero().tolist() == [[3, 3]]
+
+
+def test_global_state_is_blank_on_other_map_sizes(small_map):
+    env = TunnelEnv(small_map, n_agents=1, view_range=1, global_state=True)
+    corridor = TunnelMap(
+        walls=np.zeros((1, 5), dtype=np.int8), start=(0, 0), diameter=4
+    )
+    env.set_maps(corridor)
+    state = env.reset()["state"]
+    assert state.shape == (1, 7, 7, 3)
+    assert not state.any()
 
 
 def test_vision_blocked_by_walls():
@@ -275,7 +305,7 @@ def test_hot_vector(small_map):
     env = TunnelEnv(small_map, num_envs=2, n_agents=3, view_range=2, hot_vector=True)
     check_env_specs(env)
     obs = env.reset()[GROUP, "observation"]
-    rays_size = 4 * 2 * 3
+    rays_size = 4 * 2 * 2
     assert obs.shape == (2, 3, rays_size + 1 + 3)
     assert obs[:, :, rays_size + 1 :].tolist() == [torch.eye(3).tolist()] * 2
 

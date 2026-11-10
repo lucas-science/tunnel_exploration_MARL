@@ -13,7 +13,6 @@ name,set,description,height,width,free_cells,reachable_cells,unreachable_free,de
 12_organic_dense,test,Galeries organiques denses,50,50,782,782,0,20,115,50,104,79,43.2
 15_corner_deadend_start,test,Départ au fond d'un cul-de-sac : tous les agents empilés,50,50,562,562,0,17,33,9,171,171,97.6
 16_disconnected_pocket,test,Poche inaccessible : la couverture doit ignorer ces cases,50,50,588,573,15,26,61,22,140,119,44.7
-17_diagonal_trap,test,Tunnels qui ne se touchent qu'en diagonale : test du 4-voisinage,30,30,72,45,27,2,0,0,44,44,22.0
 18_long_narrow,test,Carte 13x121 : généralisation à d'autres dimensions,13,121,728,728,0,34,50,9,356,340,143.7
 19_large_mixed,test,Carte 100x100 mixte : passage à l'échelle,100,100,2742,2742,0,78,245,90,420,220,82.9
 train_000_organic,train,env_organic,50,50,279,279,0,7,15,5,101,54,23.7

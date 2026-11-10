@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import cast
 
+import torch
 from benchmarl.environments.common import Task, TaskClass
 from benchmarl.experiment import Experiment
 from benchmarl.utils import DEVICE_TYPING
@@ -10,8 +11,8 @@ from tensordict import TensorDictBase
 from torchrl.data import Composite
 from torchrl.envs import EnvBase
 
-from multi_agent_RL.tunnel_env import GROUP, TunnelEnv
-from multi_agent_RL.tunnel_map import TunnelMap
+from tunnel_env import GROUP, TunnelEnv
+from tunnel_map import TunnelMap
 
 
 class TunnelTaskClass(TaskClass):
@@ -52,7 +53,9 @@ class TunnelTaskClass(TaskClass):
         return self._group_spec(env, "info")
 
     def state_spec(self, env: EnvBase) -> Composite | None:
-        return None
+        if not self.config.get("global_state"):
+            return None
+        return Composite({"state": env.full_observation_spec_unbatched["state"].clone()})
 
     def action_spec(self, env: EnvBase) -> Composite:
         return env.full_action_spec_unbatched
@@ -73,6 +76,8 @@ class TunnelTaskClass(TaskClass):
 
     def _group_spec(self, env: EnvBase, key: str) -> Composite:
         spec = env.full_observation_spec_unbatched.clone()
+        if "state" in spec.keys():
+            del spec["state"]
         for group in self.group_map(env):
             for k in list(spec[group].keys()):
                 if k != key:
@@ -102,6 +107,12 @@ class TunnelExperiment(Experiment):
             test_env = unwrap(self.test_env)
             test_env.set_maps([TunnelMap.from_name(name) for name in eval_maps])
             test_env.fixed_maps = True
+
+    def _setup_algorithm(self) -> None:
+        super()._setup_algorithm()
+        if self.on_policy:
+            for buffer in self.replay_buffers.values():
+                buffer.storage.device = torch.device("cpu")
 
     def _on_evaluation_end(self, rollouts: list[TensorDictBase]) -> None:
         coverage = [

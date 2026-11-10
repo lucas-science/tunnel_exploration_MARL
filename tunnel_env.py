@@ -11,14 +11,14 @@ from torchrl.data import Bounded, Categorical, Composite, TensorSpec, Unbounded
 from torchrl.data.utils import DEVICE_TYPING
 from torchrl.envs import EnvBase
 
-from multi_agent_RL.tunnel_map import TunnelMap
+from tunnel_map import TunnelMap
 
 GROUP = "drone"
 
 ACTIONS = ("stay", "up", "down", "left", "right")
 MOVES = torch.tensor([[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]])
 VIEW_DIRECTIONS = ACTIONS[1:]
-CELL_FEATURES = ("blocked", "explored", "drone")
+CELL_FEATURES = ("blocked", "drone")
 
 
 class TunnelEnv(EnvBase):
@@ -35,6 +35,7 @@ class TunnelEnv(EnvBase):
         seed: int | None = None,
         device: DEVICE_TYPING = "cpu",
         hot_vector: bool = False,
+        global_state: bool = False,
     ) -> None:
         if view_range < 1:
             raise ValueError("view_range must be >= 1")
@@ -49,6 +50,7 @@ class TunnelEnv(EnvBase):
         self.agent_names = [i for i in range(n_agents)]
         self.hot_vector = hot_vector
         self.fixed_maps = False
+        self.global_state = global_state
         self.rays_size = len(VIEW_DIRECTIONS) * view_range * len(CELL_FEATURES)
         self.obs_size = self.rays_size + 1 + (n_agents if hot_vector else 0)
 
@@ -114,6 +116,11 @@ class TunnelEnv(EnvBase):
         self.observation_spec[GROUP]["action_mask"] = Categorical(
             2, shape=per_agent + (len(ACTIONS),), dtype=torch.bool, device=dev
         )
+        if self.global_state:
+            self.state_shape = (*self.map_walls.shape[1:], 3)
+            self.observation_spec["state"] = Categorical(
+                2, shape=(n, *self.state_shape), dtype=torch.bool, device=dev
+            )
         self.action_spec = self._per_agent(
             "action", Categorical(len(ACTIONS), shape=per_agent, device=dev)
         )
@@ -251,9 +258,8 @@ class TunnelEnv(EnvBase):
         rows, cols = cells[..., 0], cells[..., 1]
 
         blocked = self.walls[env, rows, cols].to(torch.uint8).cummax(-1).values.bool()
-        explored = self.explored[env, rows, cols] & ~blocked
         drones = (drone_counts[env, rows, cols] > 0) & ~blocked
-        rays = torch.stack([blocked, explored, drones], dim=-1).flatten(2)
+        rays = torch.stack([blocked, drones], dim=-1).flatten(2)
 
         rows, cols = self.positions[..., 0], self.positions[..., 1]
         shares_cell = drone_counts[self.env_index[:, None], rows, cols] > 1
@@ -267,9 +273,16 @@ class TunnelEnv(EnvBase):
         targets = self.positions[:, :, None] + self.moves
         return ~self.walls[env, targets[..., 0], targets[..., 1]]
 
+    def _global_map(self) -> torch.Tensor:
+        if self.walls.shape[1:] != self.state_shape[:2]:
+            return torch.zeros(
+                self.num_envs, *self.state_shape, dtype=torch.bool, device=self.device
+            )
+        return torch.stack([self.walls, self.explored, self._drone_counts() > 0], -1)
+
     def _observation_output(self) -> TensorDict:
         coverage = self.coverage().float()[:, None].expand(-1, self.n_agents)
-        return TensorDict(
+        out = TensorDict(
             {
                 GROUP: TensorDict(
                     {
@@ -283,6 +296,9 @@ class TunnelEnv(EnvBase):
             batch_size=self.batch_size,
             device=self.device,
         )
+        if self.global_state:
+            out["state"] = self._global_map()
+        return out
 
     def agent_positions(self) -> torch.Tensor:
         return self.positions - self.view_range
@@ -310,10 +326,10 @@ class TunnelEnv(EnvBase):
         )
         lines = []
         for direction, ray in zip(VIEW_DIRECTIONS, rays, strict=True):
-            blocked, explored, drone = ray.bool().unbind(-1)
+            blocked, drone = ray.bool().unbind(-1)
             cells = [
-                "#" if b else "D" if d else "." if e else "?"
-                for b, e, d in zip(blocked, explored, drone, strict=True)
+                "#" if b else "D" if d else "."
+                for b, d in zip(blocked, drone, strict=True)
             ]
             lines.append(f"{direction:>5}: {''.join(cells)}")
         lines.append(f"shares cell: {bool(obs[self.rays_size])}")

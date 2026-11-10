@@ -16,11 +16,11 @@ from benchmarl.algorithms import (
     VdnConfig,
 )
 from benchmarl.experiment import ExperimentConfig
-from benchmarl.models import GruConfig, MlpConfig
+from benchmarl.models import CnnConfig, GruConfig, MlpConfig
 
-from multi_agent_RL.benchmarl_task import TunnelExperiment, TunnelTask
-from multi_agent_RL.tunnel_map import resolve_maps
-from multi_agent_RL.util import run_name
+from benchmarl_task import TunnelExperiment, TunnelTask
+from tunnel_map import resolve_maps
+from util import run_name
 
 ALGORITHMS = {
     "mappo": MappoConfig,
@@ -92,6 +92,7 @@ def build_experiment(args: argparse.Namespace) -> TunnelExperiment:
             "reward_mode": args.reward_mode,
             "reward_alpha": args.reward_alpha,
             "hot_vector": args.hot_vector,
+            "global_state": args.algo == "mappo",
         }
     )
 
@@ -114,6 +115,7 @@ def build_experiment(args: argparse.Namespace) -> TunnelExperiment:
     config.loggers = args.loggers
     config.checkpoint_interval = args.checkpoint_interval
     config.checkpoint_at_end = True
+    config.exclude_buffer_from_checkpoint = True
     RUNS_DIR.mkdir(exist_ok=True)
     config.save_folder = str(RUNS_DIR)
 
@@ -121,11 +123,17 @@ def build_experiment(args: argparse.Namespace) -> TunnelExperiment:
     if hasattr(algorithm_config, "minibatch_advantage"):
         algorithm_config.minibatch_advantage = True
 
+    critic_model_config = MlpConfig.get_from_yaml()
+    if args.algo == "mappo":
+        critic_model_config = CnnConfig.get_from_yaml()
+        critic_model_config.cnn_strides = 2
+        critic_model_config.mlp_num_cells = [256]
+
     return TunnelExperiment(
         task=task,
         algorithm_config=algorithm_config,
         model_config=MODELS[args.model].get_from_yaml(),
-        critic_model_config=MlpConfig.get_from_yaml(),
+        critic_model_config=critic_model_config,
         seed=args.seed,
         config=config,
     )

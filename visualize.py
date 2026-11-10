@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import random
+import sys
 import tempfile
+import types
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -13,9 +15,13 @@ from matplotlib.animation import FuncAnimation, PillowWriter
 from matplotlib.colors import ListedColormap
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 
-from multi_agent_RL.benchmarl_task import unwrap
-from multi_agent_RL.tunnel_env import GROUP
-from multi_agent_RL.tunnel_map import TunnelMap, map_names
+import benchmarl_task
+from benchmarl_task import unwrap
+from tunnel_env import GROUP
+from tunnel_map import TunnelMap, map_names
+
+sys.modules["multi_agent_RL"] = types.ModuleType("multi_agent_RL")
+sys.modules["multi_agent_RL.benchmarl_task"] = benchmarl_task
 
 Frame = tuple[np.ndarray, np.ndarray, np.ndarray]
 CELL_COLORS = ListedColormap(["#d9d9d9", "#9fd8a0", "#2b2b2b"])

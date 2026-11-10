@@ -10,22 +10,33 @@ The environment is a vectorised TorchRL env: it simulates many episodes at once.
 | --- | --- | --- |
 | `envs/train/` | 73 | training |
 | `envs/val/` | 14 (2 per train family) | evaluation during training, hyperparameter and reward tuning |
-| `envs/test/` | 17 | final evaluation only, never used to tune anything. Mixes train families and unseen ones (spiral, binary tree, 100×100, ...) |
+| `envs/test/` | 16 | final evaluation only, never used to tune anything. Mixes train families and unseen ones (spiral, binary tree, 100×100, ...) |
 | `envs/old_envs/` | 6 | first hand-made maps |
 
 `envs/catalog.csv` describes every map and its set.
 
+## What each network sees
+
+Training is centralised, execution is decentralised:
+
+| Network | Input | Used at inference |
+| --- | --- | --- |
+| Actor | 4 rays of `--view-range` cells (`blocked`, `drone`), shared-cell flag, optional drone ID. It never sees which cells were explored | yes |
+| MAPPO critic | global map as an image (`walls`, `explored`, `drones`), through a CNN | no |
+
+Other algorithms use the actor observations only.
+
 ## Train
 
 ```bash
-python -m multi_agent_RL.train
+python -m train
 # full GPU, about 2× faster
-python -m multi_agent_RL.train \
-    --sampling-device cuda --n-envs 1024 --frames-per-batch 51200 --eval-interval 204800
-# 4096 envs, with the drone ID and a checkpoint every 2 iterations
-python -m multi_agent_RL.train --sampling-device cuda \
-    --n-envs 4096 --frames-per-batch 204800 --eval-interval 409600 \
-    --checkpoint-interval 409600 --hot-vector
+python -m train \
+    --sampling-device cuda --n-envs 512 --frames-per-batch 25600 --eval-interval 204800
+# with the drone ID and a checkpoint every 8 iterations
+python -m train --sampling-device cuda \
+    --n-envs 512 --frames-per-batch 25600 --eval-interval 204800 \
+    --checkpoint-interval 204800 --hot-vector
 ```
 
 `--frames-per-batch` must be a multiple of `--n-envs`, and `--eval-interval` /
@@ -43,7 +54,7 @@ run crash at the end, before the final checkpoint.
 | `--reward-mode` / `--reward-alpha` | `grouped` / 0.5 | reward |
 | `--hot-vector` | not set | flag, no value: add `--hot-vector` to enable. Appends the drone's one-hot ID to its observation, so drones can learn different roles (fixes the number of agents) |
 | `--frames` | 3 000 000 | training budget |
-| `--n-envs` | 120 | episodes simulated in parallel. On CPU, ~120 is enough (more barely speeds up). On GPU (`--sampling-device cuda`), use 1024 to 4096. VRAM is mostly used by training, not by the env: the critic processes the whole batch to compute advantages. On a 4 GB GPU, 4096 envs × 50 steps (204 800 frames per batch) fits, close to the limit; run only one training at a time on the GPU |
+| `--n-envs` | 120 | episodes simulated in parallel. On CPU, ~120 is enough (more barely speeds up). On GPU (`--sampling-device cuda`), the MAPPO global map limits the batch size, which is held twice on the training device: on a 4 GB GPU, use 512 envs × 50 steps (about 3 GB reserved); 768 fits but is tight, 1024 runs out of memory. The replay buffer stays in RAM; run only one training at a time on the GPU |
 | `--frames-per-batch` | 6000 | frames collected per iteration; keep it equal to `--n-envs` × 50 (at least 25 steps per env). `--eval-interval` and `--checkpoint-interval` must be multiples of it |
 | `--sampling-device` | `cpu` | `cuda` runs the env and the collection on GPU; worth it from ~1024 envs |
 | `--eval-interval` | 120 000 | evaluate every N frames (deterministic policy, logged as `eval/coverage_at_episode_end`); must be a multiple of `--frames-per-batch` |
@@ -59,13 +70,13 @@ so an interrupted or crashed run loses its policy.
 
 ```bash
 pip install tensorboard   # once
-tensorboard --logdir multi_agent_RL/runs # Open http://localhost:6006. 
+tensorboard --logdir runs # Open http://localhost:6006. 
 ```
 
 ## Visualise a trained policy
 
 ```bash
-python -m multi_agent_RL.visualize multi_agent_RL/runs/<run> --map old_envs/env_cross.csv
+python -m visualize runs/<run> --map old_envs/env_cross.csv
 ```
 
 Writes `runs/<run>/policy_<map>.gif` (map + coverage curve).
@@ -86,7 +97,7 @@ policy really spreads the drones or relies on randomness to do it.
 ## Play the environment by hand
 
 ```bash
-python -m multi_agent_RL.play --map old_envs/env_cross.csv --n-agents 2 --obs
+python -m play --map old_envs/env_cross.csv --n-agents 2 --obs
 ```
 
 Type one key per drone (`zqsd` or `wasd`, `.` to stay), e.g. `d.` moves drone 0
@@ -94,12 +105,12 @@ right and keeps drone 1 still. Drones move at the same time: a drone can only
 enter a free cell or one left during the same step. When several drones aim at
 the same cell, a random one gets it; two drones aiming at each other both stay. Drones are shown by their index (`+` on the
 start cell while several drones are still there). `--obs` prints what each drone sees along its 4 rays:
-`#` blocked, `D` drone, `.` explored, `?` unexplored.
+`#` blocked, `D` drone, `.` free.
 
 ## Tests
 
 ```bash
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest multi_agent_RL
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest
 ```
 
 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` is only needed if ROS is installed on the machine.

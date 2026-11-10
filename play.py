@@ -5,8 +5,8 @@ import argparse
 import torch
 from tensordict import TensorDict
 
-from multi_agent_RL.tunnel_env import ACTIONS, GROUP, TunnelEnv
-from multi_agent_RL.tunnel_map import TunnelMap
+from tunnel_env import ACTIONS, GROUP, TunnelEnv
+from tunnel_map import TunnelMap
 
 KEYS = {
     ".": "stay",
