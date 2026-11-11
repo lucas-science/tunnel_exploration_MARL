@@ -15,8 +15,10 @@ from tunnel_map import TunnelMap
 
 GROUP = "drone"
 
-ACTIONS = ("stay", "up", "down", "left", "right")
-MOVES = torch.tensor([[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]])
+HEADINGS = ("up", "right", "down", "left")
+DIRECTIONS = torch.tensor([[-1, 0], [0, 1], [1, 0], [0, -1]])
+ACTIONS = ("stay", "forward", "left", "right", "back")
+TURNS = torch.tensor([0, 3, 1, 2])
 VIEW_DIRECTIONS = ACTIONS[1:]
 CELL_FEATURES = ("blocked", "drone")
 
@@ -91,12 +93,13 @@ class TunnelEnv(EnvBase):
         self.explored = torch.zeros_like(self.walls)
         self.n_tunnels = torch.ones(n, dtype=torch.long, device=device)
         self.positions = torch.zeros(n, a, 2, dtype=torch.long, device=device)
+        self.headings = torch.zeros(n, a, dtype=torch.long, device=device)
         self.n_steps = torch.zeros(n, dtype=torch.long, device=device)
         self.patience = torch.ones(n, dtype=torch.long, device=device)
         self.steps_without_discovery = torch.zeros_like(self.n_steps)
-        self.moves = MOVES.to(device)
-        distances = torch.arange(1, self.view_range + 1, device=device)
-        self.ray_offsets = self.moves[1:, None, :] * distances[None, :, None]
+        self.directions = DIRECTIONS.to(device)
+        self.turns = TURNS.to(device)
+        self.distances = torch.arange(1, self.view_range + 1, device=device)
         self.agent_ids = torch.eye(a, dtype=torch.bool, device=device)
 
     def _per_agent(self, key: str, spec: TensorSpec) -> Composite:
@@ -163,6 +166,9 @@ class TunnelEnv(EnvBase):
         self.walls[idx] = self.map_walls[map_ids]
         self.n_tunnels[idx] = self.map_n_tunnels[map_ids]
         self.positions[idx] = starts[:, None, :].expand(-1, self.n_agents, -1)
+        self.headings[idx] = torch.randint(
+            len(HEADINGS), (len(idx), self.n_agents), generator=self.rng
+        ).to(self.device)
         self.explored[idx] = False
         self.explored[idx, starts[:, 0], starts[:, 1]] = True
         self.n_steps[idx] = 0
@@ -196,11 +202,12 @@ class TunnelEnv(EnvBase):
 
     def _move_agents(self, actions: torch.Tensor) -> torch.Tensor:
         env = self.env_index[:, None]
-        step = self.moves[actions]
+        wants_to_move = actions > 0
+        direction = (self.headings + self.turns[(actions - 1).clamp(min=0)]) % 4
+        step = torch.where(wants_to_move[..., None], self.directions[direction], 0)
         target = self.positions + step
 
         is_hiting_wall = self.walls[env, target[..., 0], target[..., 1]]
-        wants_to_move = step.any(-1)
         can_move = wants_to_move & ~is_hiting_wall
 
         is_other_drone = ~self.agent_ids
@@ -221,6 +228,7 @@ class TunnelEnv(EnvBase):
             can_move &= ~is_cell_taken
         
         self.positions = torch.where(can_move[..., None], target, self.positions)
+        self.headings = torch.where(can_move, direction, self.headings)
         rows, cols = self.positions[..., 0], self.positions[..., 1]
         new_cells = (~self.explored[env, rows, cols]).float()
         self.explored[env, rows, cols] = True
@@ -254,7 +262,8 @@ class TunnelEnv(EnvBase):
     def _observations(self) -> torch.Tensor:
         drone_counts = self._drone_counts()
         env = self.env_index[:, None, None, None]
-        cells = self.positions[:, :, None, None, :] + self.ray_offsets
+        offsets = self._relative_steps()[..., None, :] * self.distances[:, None]
+        cells = self.positions[:, :, None, None, :] + offsets
         rows, cols = cells[..., 0], cells[..., 1]
 
         blocked = self.walls[env, rows, cols].to(torch.uint8).cummax(-1).values.bool()
@@ -268,10 +277,15 @@ class TunnelEnv(EnvBase):
             parts.append(self.agent_ids.expand(self.num_envs, -1, -1))
         return torch.cat(parts, dim=-1).float()
 
+    def _relative_steps(self) -> torch.Tensor:
+        return self.directions[(self.headings[..., None] + self.turns) % 4]
+
     def _action_masks(self) -> torch.Tensor:
         env = self.env_index[:, None, None]
-        targets = self.positions[:, :, None] + self.moves
-        return ~self.walls[env, targets[..., 0], targets[..., 1]]
+        targets = self.positions[:, :, None] + self._relative_steps()
+        free = ~self.walls[env, targets[..., 0], targets[..., 1]]
+        stay = torch.ones_like(free[..., :1])
+        return torch.cat([stay, free], dim=-1)
 
     def _global_map(self) -> torch.Tensor:
         if self.walls.shape[1:] != self.state_shape[:2]:

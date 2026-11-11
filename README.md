@@ -17,11 +17,13 @@ The environment is a vectorised TorchRL env: it simulates many episodes at once.
 
 ## What each network sees
 
+Each drone has a heading: its actions are `stay`, `forward`, `left`, `right`, `back`, relative to it. The heading becomes the direction of the drone's last actual move, and is drawn at random for each drone at the start of an episode.
+
 Training is centralised, execution is decentralised:
 
 | Network | Input | Used at inference |
 | --- | --- | --- |
-| Actor | 4 rays of `--view-range` cells (`blocked`, `drone`), shared-cell flag, optional drone ID. It never sees which cells were explored | yes |
+| Actor | 4 rays of `--view-range` cells (`blocked`, `drone`) pointing forward, left, right and back relative to the drone's heading, shared-cell flag, optional drone ID. It never sees which cells were explored | yes |
 | MAPPO critic | global map as an image (`walls`, `explored`, `drones`), through a CNN | no |
 
 Other algorithms use the actor observations only.
@@ -83,7 +85,7 @@ Writes `runs/<run>/policy_<map>.gif` (map + coverage curve).
 
 | Option | Default | |
 | --- | --- | --- |
-| `--map` | random among the run's maps | map to replay, can be unseen during training |
+| `--map` | random among the run's maps | maps or folders to replay, relative to `envs/`, can be unseen during training. One GIF per map |
 | `--stochastic` | off | sample actions from the policy probabilities, as during training, instead of taking the most likely one |
 | `--seed` | random (printed) | replay the same episode |
 | `--live` | off | open a window instead of writing a GIF |
@@ -100,11 +102,11 @@ policy really spreads the drones or relies on randomness to do it.
 python -m play --map old_envs/env_cross.csv --n-agents 2 --obs
 ```
 
-Type one key per drone (`zqsd` or `wasd`, `.` to stay), e.g. `d.` moves drone 0
-right and keeps drone 1 still. Drones move at the same time: a drone can only
+Type one key per drone, relative to its heading (`z`/`w` forward, `q`/`a` left, `d` right, `s` back, `.` to stay), e.g. `d.` turns drone 0
+to its right and keeps drone 1 still. Each drone's heading is printed under the map. Drones move at the same time: a drone can only
 enter a free cell or one left during the same step. When several drones aim at
 the same cell, a random one gets it; two drones aiming at each other both stay. Drones are shown by their index (`+` on the
-start cell while several drones are still there). `--obs` prints what each drone sees along its 4 rays:
+start cell while several drones are still there). `--obs` prints what each drone sees along its 4 relative rays:
 `#` blocked, `D` drone, `.` free.
 
 ## Tests

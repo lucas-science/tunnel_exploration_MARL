@@ -6,7 +6,7 @@ import torch
 from tensordict import TensorDict, TensorDictBase
 from torchrl.envs.utils import check_env_specs
 
-from tunnel_env import GROUP, TunnelEnv
+from tunnel_env import GROUP, HEADINGS, TunnelEnv
 from tunnel_map import TunnelMap, map_names
 
 SMALL_MAP_CSV = """\
@@ -41,6 +41,20 @@ def rays_of(obs, view_range):
     return obs[:-1].reshape(4, view_range, 2)
 
 
+STAY, FORWARD, LEFT, RIGHT, BACK = range(5)
+UP, EAST, DOWN, WEST = range(4)
+
+
+def face(env, heading):
+    env.headings[:] = heading
+    return env._observation_output()
+
+
+def go(env, direction):
+    turn = (direction - int(env.headings[0, 0])) % 4
+    return act(env, [[(FORWARD, RIGHT, BACK, LEFT)[turn]]])
+
+
 def test_load_map(small_map):
     assert small_map.shape == (5, 5)
     assert small_map.start == (1, 2)
@@ -65,15 +79,17 @@ def test_specs():
 def test_walls_block_moves(small_map):
     env = TunnelEnv(small_map, n_agents=1)
     env.reset()
-    act(env, [[1]])
+    face(env, UP)
+    act(env, [[FORWARD]])
     assert env.agent_positions()[0, 0].tolist() == [1, 2]
 
 
 def test_action_mask_forbids_walls(small_map):
     env = TunnelEnv(small_map, n_agents=1)
-    mask = env.reset()[GROUP, "action_mask"][0, 0]
+    env.reset()
+    mask = face(env, UP)[GROUP, "action_mask"][0, 0]
     assert mask.tolist() == [True, False, True, True, True]
-    mask = act(env, [[3]])[GROUP, "action_mask"][0, 0]
+    mask = act(env, [[LEFT]])[GROUP, "action_mask"][0, 0]
     assert mask.tolist() == [True, False, True, False, True]
 
 
@@ -83,9 +99,40 @@ def test_open_border_blocks_moves():
     )
     env = TunnelEnv(open_map, n_agents=1)
     env.reset()
-    act(env, [[3]])
-    act(env, [[1]])
+    face(env, UP)
+    act(env, [[LEFT]])
+    act(env, [[FORWARD]])
     assert env.agent_positions()[0, 0].tolist() == [0, 0]
+
+
+def test_heading_follows_actual_moves():
+    env = corridor_env(1)
+    face(env, EAST)
+    act(env, [[FORWARD]])
+    assert env.agent_positions()[0, 0].tolist() == [0, 1]
+    assert HEADINGS[int(env.headings[0, 0])] == "right"
+    act(env, [[BACK]])
+    assert env.agent_positions()[0, 0].tolist() == [0, 0]
+    assert HEADINGS[int(env.headings[0, 0])] == "left"
+    act(env, [[FORWARD]])
+    assert HEADINGS[int(env.headings[0, 0])] == "left"
+
+
+def test_rays_turn_with_heading(small_map):
+    env = TunnelEnv(small_map, n_agents=1, view_range=2)
+    env.reset()
+    up = rays_of(face(env, UP)[GROUP, "observation"][0, 0], 2)
+    east = rays_of(face(env, EAST)[GROUP, "observation"][0, 0], 2)
+    assert east[0].tolist() == up[2].tolist()
+    assert east[1].tolist() == up[0].tolist()
+    assert east[2].tolist() == up[3].tolist()
+    assert east[3].tolist() == up[1].tolist()
+
+
+def test_initial_headings_are_random(small_map):
+    env = TunnelEnv(small_map, num_envs=50, n_agents=4, seed=0)
+    env.reset()
+    assert set(env.headings.flatten().tolist()) == {0, 1, 2, 3}
 
 
 def corridor_env(n_agents):
@@ -94,6 +141,7 @@ def corridor_env(n_agents):
     )
     env = TunnelEnv(corridor, n_agents=n_agents)
     env.reset()
+    face(env, EAST)
     return env
 
 
@@ -103,7 +151,7 @@ def cols_of(env):
 
 def test_leaving_the_start_one_at_a_time():
     env = corridor_env(2)
-    act(env, [[4, 4]])
+    act(env, [[FORWARD, FORWARD]])
     assert sorted(cols_of(env)) == [0, 1]
 
 
@@ -113,7 +161,8 @@ def test_conflict_winner_is_random():
     )
     env = TunnelEnv(corridor, num_envs=200, n_agents=2, seed=0)
     env.reset()
-    act(env, [[4, 4]] * 200)
+    face(env, EAST)
+    act(env, [[FORWARD, FORWARD]] * 200)
     cols = env.agent_positions()[..., 1]
     assert (cols.sum(-1) == 1).all()
     assert 50 < int((cols[:, 0] == 1).sum()) < 150
@@ -121,38 +170,39 @@ def test_conflict_winner_is_random():
 
 def test_drones_follow_each_other():
     env = corridor_env(2)
-    act(env, [[0, 4]])
-    act(env, [[4, 4]])
+    act(env, [[STAY, FORWARD]])
+    act(env, [[FORWARD, FORWARD]])
     assert cols_of(env) == [1, 2]
 
 
 def test_blocked_by_still_drone():
     env = corridor_env(2)
-    act(env, [[0, 4]])
-    act(env, [[4, 0]])
+    act(env, [[STAY, FORWARD]])
+    act(env, [[FORWARD, STAY]])
     assert cols_of(env) == [0, 1]
 
 
 def test_drones_cannot_swap():
     env = corridor_env(2)
-    act(env, [[0, 4]])
-    act(env, [[4, 3]])
+    act(env, [[STAY, FORWARD]])
+    act(env, [[FORWARD, BACK]])
     assert cols_of(env) == [0, 1]
 
 
 def test_cannot_go_back_to_occupied_start():
     env = corridor_env(3)
-    act(env, [[0, 0, 4]])
-    act(env, [[0, 0, 3]])
+    act(env, [[STAY, STAY, FORWARD]])
+    act(env, [[STAY, STAY, BACK]])
     assert cols_of(env) == [0, 0, 1]
 
 
 def test_grouped_reward_counts_new_cells(small_map):
     env = TunnelEnv(small_map, n_agents=2, step_penalty=0.0)
     env.reset()
-    out = act(env, [[3, 4]])
+    face(env, UP)
+    out = act(env, [[LEFT, RIGHT]])
     assert rewards_of(out) == [2.0, 2.0]
-    out = act(env, [[4, 3]])
+    out = act(env, [[BACK, BACK]])
     assert rewards_of(out) == [0.0, 0.0]
     assert env.agent_positions()[0].tolist() in (
         [[1, 2], [1, 3]],
@@ -165,32 +215,35 @@ def test_mixed_reward(small_map):
         small_map, n_agents=2, step_penalty=0.0, reward_mode="mixed", reward_alpha=0.5
     )
     env.reset()
-    out = act(env, [[3, 0]])
+    face(env, UP)
+    out = act(env, [[LEFT, STAY]])
     assert rewards_of(out) == [1.0, 0.5]
 
 
 def test_ray_observation(small_map):
     env = TunnelEnv(small_map, n_agents=2, view_range=2)
-    obs = env.reset()[GROUP, "observation"][0, 0]
+    env.reset()
+    obs = face(env, UP)[GROUP, "observation"][0, 0]
     assert obs.shape == (4 * 2 * 2 + 1,)
     rays = rays_of(obs, 2)
     assert rays[0].tolist() == [[1, 0], [1, 0]]
-    assert rays[1].tolist() == [[0, 0], [0, 0]]
+    assert rays[1].tolist() == [[0, 0], [1, 0]]
     assert rays[2].tolist() == [[0, 0], [1, 0]]
-    assert rays[3].tolist() == [[0, 0], [1, 0]]
+    assert rays[3].tolist() == [[0, 0], [0, 0]]
     assert obs[-1] == 1.0
 
-    obs = act(env, [[0, 2]])[GROUP, "observation"][0, 0]
-    assert rays_of(obs, 2)[1].tolist() == [[0, 1], [0, 0]]
+    obs = act(env, [[STAY, BACK]])[GROUP, "observation"][0, 0]
+    assert rays_of(obs, 2)[3].tolist() == [[0, 1], [0, 0]]
     assert obs[-1] == 0.0
 
 
 def test_actor_does_not_see_explored_cells(small_map):
     env = TunnelEnv(small_map, n_agents=1)
-    first = env.reset()[GROUP, "observation"].clone()
-    act(env, [[2]])
+    env.reset()
+    first = face(env, UP)[GROUP, "observation"].clone()
+    act(env, [[BACK]])
     assert env.explored.sum() == 2
-    back = act(env, [[1]])[GROUP, "observation"]
+    back = act(env, [[BACK]])[GROUP, "observation"]
     assert torch.equal(first, back)
 
 
@@ -199,7 +252,8 @@ def test_global_state_shows_explored_map(small_map):
     state = env.reset()["state"][0]
     assert state.shape == (7, 7, 3)
     assert state[..., 1].nonzero().tolist() == [[2, 3]]
-    state = act(env, [[2]])["state"][0]
+    face(env, UP)
+    state = act(env, [[BACK]])["state"][0]
     assert state[..., 0].equal(env.walls[0])
     assert state[..., 1].nonzero().tolist() == [[2, 3], [3, 3]]
     assert state[..., 2].nonzero().tolist() == [[3, 3]]
@@ -221,16 +275,17 @@ def test_vision_blocked_by_walls():
         walls=np.array([[0, 1, 0, 0]], dtype=np.int8), start=(0, 0), diameter=0
     )
     env = TunnelEnv(corridor, n_agents=1, view_range=3)
-    obs = env.reset()[GROUP, "observation"][0, 0]
-    assert rays_of(obs, 3)[3, :, 0].tolist() == [1, 1, 1]
+    env.reset()
+    obs = face(env, EAST)[GROUP, "observation"][0, 0]
+    assert rays_of(obs, 3)[0, :, 0].tolist() == [1, 1, 1]
 
 
 def test_terminates_when_fully_explored(small_map):
     env = TunnelEnv(small_map, n_agents=1)
     env.reset()
-    path = [3, 2, 2, 4, 1, 4, 1, 2, 2]
-    for i, action in enumerate(path):
-        out = act(env, [[action]])
+    path = [WEST, DOWN, DOWN, EAST, UP, EAST, UP, DOWN, DOWN]
+    for i, direction in enumerate(path):
+        out = go(env, direction)
         assert out["terminated"].item() == (i == len(path) - 1)
     assert out["done"].item()
     assert out[GROUP, "info", "coverage"][0, 0] == 1.0
@@ -240,7 +295,7 @@ def test_truncation(small_map):
     env = TunnelEnv(small_map, n_agents=1, max_steps=3)
     env.reset()
     for _ in range(3):
-        out = act(env, [[0]])
+        out = act(env, [[STAY]])
     assert out["truncated"].item()
     assert not out["terminated"].item()
 
@@ -249,9 +304,9 @@ def test_truncates_when_discovery_stalls(small_map):
     env = TunnelEnv(small_map, n_agents=1)
     env.reset()
     for _ in range(3):
-        out = act(env, [[0]])
+        out = act(env, [[STAY]])
     assert not out["truncated"].item()
-    out = act(env, [[0]])
+    out = act(env, [[STAY]])
     assert out["truncated"].item()
     assert not out["terminated"].item()
 
@@ -259,7 +314,8 @@ def test_truncates_when_discovery_stalls(small_map):
 def test_discovery_resets_stall_counter(small_map):
     env = TunnelEnv(small_map, n_agents=1)
     env.reset()
-    for action in [0, 0, 0, 3, 0, 0, 0]:
+    face(env, UP)
+    for action in [STAY, STAY, STAY, LEFT, STAY, STAY, STAY]:
         out = act(env, [[action]])
     assert not out["truncated"].item()
 
@@ -267,7 +323,8 @@ def test_discovery_resets_stall_counter(small_map):
 def test_partial_reset(small_map):
     env = TunnelEnv(small_map, num_envs=2, n_agents=1)
     env.reset()
-    act(env, [[2], [2]])
+    face(env, UP)
+    act(env, [[BACK], [BACK]])
     env.reset(TensorDict({"_reset": torch.tensor([[True], [False]])}, batch_size=[2]))
     positions = env.agent_positions()[:, 0].tolist()
     assert positions == [[1, 2], [2, 2]]
@@ -279,8 +336,10 @@ def test_envs_are_independent():
     batched = TunnelEnv(tunnel_map, num_envs=3, n_agents=1, seed=0)
     singles = [TunnelEnv(tunnel_map, n_agents=1, seed=0) for _ in range(3)]
     batched.reset()
+    face(batched, UP)
     for env in singles:
         env.reset()
+        face(env, UP)
 
     generator = torch.Generator().manual_seed(0)
     for _ in range(50):
@@ -304,11 +363,13 @@ def test_rollout_auto_resets():
 def test_hot_vector(small_map):
     env = TunnelEnv(small_map, num_envs=2, n_agents=3, view_range=2, hot_vector=True)
     check_env_specs(env)
-    obs = env.reset()[GROUP, "observation"]
+    env.reset()
+    obs = face(env, UP)[GROUP, "observation"]
     rays_size = 4 * 2 * 2
     assert obs.shape == (2, 3, rays_size + 1 + 3)
     assert obs[:, :, rays_size + 1 :].tolist() == [torch.eye(3).tolist()] * 2
 
     plain = TunnelEnv(small_map, num_envs=2, n_agents=3, view_range=2)
-    plain_obs = plain.reset()[GROUP, "observation"]
+    plain.reset()
+    plain_obs = face(plain, UP)[GROUP, "observation"]
     assert torch.equal(obs[..., : rays_size + 1], plain_obs)

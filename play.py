@@ -5,21 +5,22 @@ import argparse
 import torch
 from tensordict import TensorDict
 
-from tunnel_env import ACTIONS, GROUP, TunnelEnv
+from tunnel_env import ACTIONS, GROUP, HEADINGS, TunnelEnv
 from tunnel_map import TunnelMap
 
 KEYS = {
     ".": "stay",
     "x": "stay",
-    "z": "up",
-    "w": "up",
-    "s": "down",
+    "z": "forward",
+    "w": "forward",
+    "s": "back",
     "q": "left",
     "a": "left",
     "d": "right",
 }
 HELP = (
-    "zqsd / wasd: move, '.' or 'x': stay, one key per drone (e.g. 'zd.s') "
+    "z/w: forward, q/a: left, d: right, s: back (relative to each drone's heading), "
+    "'.' or 'x': stay, one key per drone (e.g. 'zd.s') "
     "or one key for all, 'r': reset, 'o': toggle observations, Ctrl+D: quit"
 )
 
@@ -37,6 +38,8 @@ def show(env: TunnelEnv, td: TensorDict, show_obs: bool) -> None:
     print(env.render())
     coverage = float(env.coverage()[0])
     print(f"step {int(env.n_steps[0])}/{env.max_steps}  coverage {coverage:.1%}")
+    headings = [HEADINGS[h] for h in env.headings[0].tolist()]
+    print("headings", ", ".join(f"{i}: {h}" for i, h in enumerate(headings)))
     if show_obs:
         for i, obs in enumerate(td[GROUP, "observation"][0]):
             print(f"drone {i}\n{env.describe_observation(obs)}")

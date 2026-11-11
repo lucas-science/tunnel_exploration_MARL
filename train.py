@@ -38,8 +38,8 @@ benchmarl_experiment.generate_exp_name = run_name
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--maps", nargs="+", default=["train"])
-    parser.add_argument("--eval-maps", nargs="*", default=["val"])
+    parser.add_argument("--maps", nargs="+", default=["small_maps/train"])
+    parser.add_argument("--eval-maps", nargs="*", default=["small_maps/val"])
     parser.add_argument("--algo", default="mappo", choices=ALGORITHMS)
     parser.add_argument("--model", default="mlp", choices=MODELS)
     parser.add_argument("--n-agents", type=int, default=4)

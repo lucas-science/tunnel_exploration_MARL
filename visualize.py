@@ -18,7 +18,7 @@ from torchrl.envs.utils import ExplorationType, set_exploration_type
 import benchmarl_task
 from benchmarl_task import unwrap
 from tunnel_env import GROUP
-from tunnel_map import TunnelMap, map_names
+from tunnel_map import TunnelMap, resolve_maps
 
 sys.modules["multi_agent_RL"] = types.ModuleType("multi_agent_RL")
 sys.modules["multi_agent_RL.benchmarl_task"] = benchmarl_task
@@ -30,13 +30,22 @@ CELL_COLORS = ListedColormap(["#d9d9d9", "#9fd8a0", "#2b2b2b"])
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("run", type=Path, help="dossier du run ou fichier .pt")
-    parser.add_argument("--map", choices=map_names())
+    parser.add_argument("--map", nargs="+")
     parser.add_argument("--seed", type=int)
     parser.add_argument("--stochastic", action="store_true")
     parser.add_argument("--fps", type=int, default=10)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--live", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.maps = [None]
+    if args.map:
+        try:
+            args.maps = resolve_maps([name.lstrip("/") for name in args.map])
+        except FileNotFoundError as error:
+            parser.error(str(error))
+    if len(args.maps) > 1 and args.output:
+        parser.error("--output n'est possible qu'avec une seule carte")
+    return args
 
 
 def find_checkpoint(path: Path) -> Path:
@@ -153,25 +162,27 @@ def main() -> None:
                 "evaluation_episodes": 1,
             },
         )
-        frames, coverage, map_name = run_episode(
-            experiment, args.map, seed, args.stochastic
-        )
-
-    print(
-        f"{map_name} (seed {seed}) : {len(frames) - 1} steps, "
-        f"couverture finale {coverage[-1]:.1%}"
-    )
-    animation = animate(
-        frames, coverage, f"{checkpoint.parent.parent.name} — {map_name}"
-    )
-    if args.live:
-        plt.show()
-        return
-    output = (
-        args.output or checkpoint.parent.parent / f"policy_{Path(map_name).stem}.gif"
-    )
-    animation.save(output, writer=PillowWriter(fps=args.fps))
-    print(f"GIF : {output}")
+        for map_arg in args.maps:
+            frames, coverage, map_name = run_episode(
+                experiment, map_arg, seed, args.stochastic
+            )
+            print(
+                f"{map_name} (seed {seed}) : {len(frames) - 1} steps, "
+                f"couverture finale {coverage[-1]:.1%}"
+            )
+            animation = animate(
+                frames, coverage, f"{checkpoint.parent.parent.name} — {map_name}"
+            )
+            if args.live:
+                plt.show()
+                continue
+            output = (
+                args.output
+                or checkpoint.parent.parent / f"policy_{Path(map_name).stem}.gif"
+            )
+            animation.save(output, writer=PillowWriter(fps=args.fps))
+            plt.close("all")
+            print(f"GIF : {output}")
 
 
 if __name__ == "__main__":
