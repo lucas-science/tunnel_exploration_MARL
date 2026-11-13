@@ -33,8 +33,6 @@ MODELS = {"mlp": MlpConfig, "gru": GruConfig}
 
 RUNS_DIR = Path(__file__).parent / "runs"
 
-benchmarl_experiment.generate_exp_name = run_name
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -58,7 +56,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--eval-interval", type=int, default=120_000)
     parser.add_argument("--checkpoint-interval", type=int, default=0)
-    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--seed", type=int, nargs="+", default=[0])
+    parser.add_argument("--experiment", default="", help="sous-dossier de runs/")
     parser.add_argument("--loggers", nargs="*", default=["csv", "tensorboard"])
     parser.add_argument("--sampling-device", default="cpu")
     parser.add_argument(
@@ -79,7 +78,7 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def build_experiment(args: argparse.Namespace) -> TunnelExperiment:
+def build_experiment(args: argparse.Namespace, seed: int) -> TunnelExperiment:
     eval_maps = resolve_maps(args.eval_maps)
     task = TunnelTask.TUNNEL.get_task(
         config={
@@ -116,8 +115,9 @@ def build_experiment(args: argparse.Namespace) -> TunnelExperiment:
     config.checkpoint_interval = args.checkpoint_interval
     config.checkpoint_at_end = True
     config.exclude_buffer_from_checkpoint = True
-    RUNS_DIR.mkdir(exist_ok=True)
-    config.save_folder = str(RUNS_DIR)
+    save_folder = RUNS_DIR / args.experiment
+    save_folder.mkdir(parents=True, exist_ok=True)
+    config.save_folder = str(save_folder)
 
     algorithm_config = ALGORITHMS[args.algo].get_from_yaml()
     if hasattr(algorithm_config, "minibatch_advantage"):
@@ -134,13 +134,19 @@ def build_experiment(args: argparse.Namespace) -> TunnelExperiment:
         algorithm_config=algorithm_config,
         model_config=MODELS[args.model].get_from_yaml(),
         critic_model_config=critic_model_config,
-        seed=args.seed,
+        seed=seed,
         config=config,
     )
 
 
 def main() -> None:
-    build_experiment(parse_args()).run()
+    args = parse_args()
+    for seed in args.seed:
+        print(f"=== seed {seed} ===")
+        benchmarl_experiment.generate_exp_name = (
+            lambda prefix, tag, seed=seed: run_name(f"{prefix}_seed{seed}", tag)
+        )
+        build_experiment(args, seed).run()
 
 
 if __name__ == "__main__":
