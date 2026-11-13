@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +16,10 @@ def map_names() -> list[str]:
     return sorted(
         str(p.relative_to(MAPS_DIR)) for p in paths if p.name != "catalog.csv"
     )
+
+
+def map_family(name: str) -> str:
+    return re.sub(r"^(?:[a-z]+_)?\d+_", "", Path(name).stem)
 
 
 def resolve_maps(names: list[str]) -> list[str]:
