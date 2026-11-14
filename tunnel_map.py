@@ -22,6 +22,11 @@ def map_family(name: str) -> str:
     return re.sub(r"^(?:[a-z]+_)?\d+_", "", Path(name).stem)
 
 
+def map_set(name: str) -> str:
+    parts = Path(name).parts
+    return parts[0] if len(parts) > 2 else "maps"
+
+
 def resolve_maps(names: list[str]) -> list[str]:
     resolved = []
     for name in names:
