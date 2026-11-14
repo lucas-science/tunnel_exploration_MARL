@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import warnings
 from pathlib import Path
 
 import matplotlib
@@ -10,60 +11,85 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
 
-from tunnel_map import map_family
+from tunnel_map import map_family, map_set
 
 Curves = dict[tuple[str, str], np.ndarray]
+ModeCurves = dict[str, np.ndarray]
+ModeScores = dict[str, dict[str, np.ndarray]]
 
-MODE_COLORS = {"greedy": "#2a78d6", "stochastic": "#eb6834"}
-MODE_LABELS = {"greedy": "greedy", "stochastic": "stochastique"}
-INK = "#0b0b0b"
-INK_SECONDARY = "#52514e"
-INK_MUTED = "#8a8984"
-GRID = "#e6e5e0"
-SURFACE = "#fcfcfb"
+MODE_COLORS = {"greedy": "#4C72B0", "stochastic": "#DD8452", "baseline": "#55A868"}
+MODE_LABELS = {"greedy": "Greedy", "stochastic": "Stochastic", "baseline": "Baseline"}
+FAMILY_LABELS = {"corner_start_deadend": "corner", "braided_maze": "braided", "grid_city": "grid"}
 STYLE = {
-    "font.family": "DejaVu Sans",
-    "font.size": 10,
-    "text.color": INK,
-    "axes.facecolor": SURFACE,
-    "figure.facecolor": SURFACE,
-    "savefig.facecolor": SURFACE,
-    "axes.edgecolor": "#c3c2b7",
-    "axes.linewidth": 0.8,
-    "axes.labelcolor": INK_SECONDARY,
-    "axes.titlesize": 11,
-    "axes.titleweight": "semibold",
-    "axes.titlelocation": "left",
-    "axes.titlepad": 8,
+    "font.family": "sans-serif",
+    "font.sans-serif": ["Nimbus Sans", "Liberation Sans", "DejaVu Sans"],
+    "font.size": 9,
+    "axes.labelsize": 9,
+    "xtick.labelsize": 8,
+    "ytick.labelsize": 8,
+    "legend.fontsize": 8,
+    "axes.titlesize": 9,
     "axes.spines.top": False,
     "axes.spines.right": False,
     "axes.grid": True,
-    "grid.color": GRID,
-    "grid.linewidth": 0.8,
-    "xtick.color": INK_SECONDARY,
-    "ytick.color": INK_SECONDARY,
-    "xtick.major.size": 0,
-    "ytick.major.size": 0,
+    "axes.axisbelow": True,
+    "axes.linewidth": 0.8,
+    "grid.color": "0.9",
+    "grid.linewidth": 0.6,
     "legend.frameon": False,
-    "savefig.dpi": 200,
+    "figure.facecolor": "white",
+    "savefig.facecolor": "white",
+    "savefig.dpi": 300,
 }
+ERROR_KW = {"elinewidth": 1.0, "capsize": 3, "capthick": 1.0, "ecolor": "0.15"}
+SPEED_THRESHOLD = 0.9
 T_95 = [12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228,
         2.201, 2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101, 2.093, 2.086]
 
+EPISODE_METRICS = {"coverage": "final_coverage", "solved_rate": "solved", "reached_90_rate": "reached_90",
+                   "steps_to_90": "steps_to_90"}
+METRIC_NAMES = ("Couverture finale", "Épisodes à 100 %", "Épisodes à 90 %", "Pas pour 90 %")
+METRIC_FORMATS = {"coverage": ".1%", "solved_rate": ".1%", "reached_90_rate": ".1%", "steps_to_90": ".0f"}
+SUMMARY_NOTES = [
+    "Valeurs : moyenne ± écart-type entre runs (un score par run : moyenne par carte, puis sur les cartes du groupe).",
+    "Un épisode s'arrête quand toutes les cases atteignables sont explorées, ou quand plus aucune case "
+    "n'est découverte pendant patience × diamètre de la carte pas.",
+    f"Pas pour 90 % : premier pas où {SPEED_THRESHOLD:.0%} des cases atteignables sont explorées, "
+    "moyenne sur les seuls épisodes qui y arrivent (leur part est dans « Épisodes à 90 % »).",
+]
 
-def mean_ci(values: np.ndarray) -> tuple[np.ndarray, ...]:
+
+def unique(values) -> list:
+    return list(dict.fromkeys(values))
+
+
+def of_set(rows: list[dict], map_set_name: str) -> list[dict]:
+    return [r for r in rows if r["maps"] == map_set_name]
+
+
+def quiet_nanmean(values: np.ndarray, axis: int | None = None) -> np.ndarray:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        return np.nanmean(values, axis)
+
+
+def mean_ci(values: np.ndarray, bounded: bool = True) -> tuple[np.ndarray, ...]:
+    if values.ndim == 1:
+        values = values[~np.isnan(values)]
     n = len(values)
+    if n == 0:
+        return (np.nan,) * 4
     mean = values.mean(0)
     if n < 2:
         nan = np.full_like(mean, np.nan, dtype=float)
         return mean, nan, nan, nan
     std = values.std(0, ddof=1)
-    half = (T_95[n - 2] if n - 2 < len(T_95) else 1.96) * std / np.sqrt(n)
-    return mean, std, np.clip(mean - half, 0, 1), np.clip(mean + half, 0, 1)
-
-
-def modes_of(curves: Curves) -> list[str]:
-    return list(dict.fromkeys(mode for _, mode in curves))
+    t = T_95[n - 2] if n - 2 < len(T_95) else 1.96
+    half = t * std / np.sqrt(n)
+    low, high = mean - half, mean + half
+    if bounded:
+        low, high = np.clip(low, 0, 1), np.clip(high, 0, 1)
+    return mean, std, low, high
 
 
 def map_groups(maps: list[str]) -> dict[str, list[int]]:
@@ -73,21 +99,40 @@ def map_groups(maps: list[str]) -> dict[str, list[int]]:
     }
 
 
-def run_curves(curves: Curves, runs: list[str], mode: str) -> np.ndarray:
-    return np.stack([curves[run, mode] for run in runs]).mean(2)
+def family_groups(maps: list[str]) -> dict[str, list[int]]:
+    return {g: idx for g, idx in map_groups(maps).items() if g != "all"}
 
 
-def episode_rows(curves: Curves, maps: list[str]) -> list[dict]:
+def steps_to_threshold(curves: np.ndarray) -> np.ndarray:
+    reached = curves >= SPEED_THRESHOLD - 1e-9
+    return np.where(reached.any(-1), reached.argmax(-1), np.nan)
+
+
+def split_by_set(curves: Curves, lengths: Curves, maps: list[str]) -> dict[str, tuple[Curves, Curves, list[str]]]:
+    by_set = {}
+    for s in unique(map_set(m) for m in maps):
+        idx = [i for i, m in enumerate(maps) if map_set(m) == s]
+        n_steps = max(int(length[idx].max()) for length in lengths.values()) + 1
+        by_set[s] = ({key: curve[idx, :, :n_steps] for key, curve in curves.items()},
+                     {key: length[idx] for key, length in lengths.items()},
+                     [maps[i] for i in idx])
+    return by_set
+
+
+def episode_rows(curves: Curves, lengths: Curves, maps: list[str]) -> list[dict]:
     rows = []
     for (run, mode), curve in curves.items():
         for m, name in enumerate(maps):
             for e, episode in enumerate(curve[m]):
                 full = np.flatnonzero(episode >= 1)
+                steps_to_90 = steps_to_threshold(episode)
                 rows.append({
                     "run": run, "mode": mode, "map": name, "family": map_family(name),
-                    "episode": e, "final_coverage": episode[-1],
+                    "episode": e, "length": lengths[run, mode][m, e], "final_coverage": episode[-1],
                     "solved": int(len(full) > 0),
                     "steps_to_full": full[0] if len(full) else "",
+                    "reached_90": int(not np.isnan(steps_to_90)),
+                    "steps_to_90": steps_to_90,
                 })
     return rows
 
@@ -102,30 +147,48 @@ def per_map_rows(curves: Curves, maps: list[str]) -> list[dict]:
     ]
 
 
-def summary_and_curve_rows(
-    curves: Curves, runs: list[str], maps: list[str]
-) -> tuple[list[dict], list[dict]]:
-    summary, curve_rows = [], []
-    for mode in modes_of(curves):
-        per_map = run_curves(curves, runs, mode)
-        solved_per_map = (np.stack([curves[run, mode] for run in runs])[..., -1] >= 1).mean(2)
+def curve_rows(curves: Curves, runs: list[str], maps: list[str]) -> list[dict]:
+    rows = []
+    for mode in unique(mode for _, mode in curves):
+        per_map = np.stack([curves[run, mode] for run in runs]).mean(2)
         for group, idx in map_groups(maps).items():
-            group_curves = per_map[:, idx].mean(1)
-            cov_mean, cov_std, cov_low, cov_high = mean_ci(group_curves[:, -1])
-            sol_mean, _, sol_low, sol_high = mean_ci(solved_per_map[:, idx].mean(1))
-            summary.append({
-                "mode": mode, "group": group, "n_runs": len(runs), "n_maps": len(idx),
-                "coverage_mean": cov_mean, "coverage_std": cov_std,
-                "coverage_ci_low": cov_low, "coverage_ci_high": cov_high,
-                "solved_rate_mean": sol_mean,
-                "solved_rate_ci_low": sol_low, "solved_rate_ci_high": sol_high,
-            })
-            for step, (mean, _, low, high) in enumerate(zip(*mean_ci(group_curves))):
-                curve_rows.append({
-                    "mode": mode, "group": group, "step": step,
-                    "mean": mean, "ci_low": low, "ci_high": high,
-                })
-    return summary, curve_rows
+            for step, (mean, _, low, high) in enumerate(zip(*mean_ci(per_map[:, idx].mean(1)))):
+                rows.append({"mode": mode, "group": group, "step": step,
+                             "mean": mean, "ci_low": low, "ci_high": high})
+    return rows
+
+
+def index_rows(rows: list[dict], column: str) -> dict[tuple[str, str, str], list[float]]:
+    index: dict[tuple[str, str, str], list[float]] = {}
+    for r in rows:
+        index.setdefault((r["mode"], r["run"], r["map"]), []).append(float(r[column]))
+    return index
+
+
+def map_scores(rows: list[dict], runs: list[str], maps: list[str], mode: str) -> dict[str, np.ndarray]:
+    scores = {}
+    for key, column in EPISODE_METRICS.items():
+        index = index_rows(rows, column)
+        scores[key] = np.array([[quiet_nanmean(index[mode, run, name]) for name in maps] for run in runs])
+    return scores
+
+
+def summary_rows(episodes: list[dict]) -> list[dict]:
+    rows = []
+    for s in unique(r["maps"] for r in episodes):
+        set_episodes = of_set(episodes, s)
+        runs = unique(r["run"] for r in set_episodes)
+        maps = unique(r["map"] for r in set_episodes)
+        for mode in unique(r["mode"] for r in set_episodes):
+            scores = map_scores(set_episodes, runs, maps, mode)
+            for group, idx in map_groups(maps).items():
+                row = {"maps": s, "mode": mode, "group": group, "n_runs": len(runs), "n_maps": len(idx)}
+                for key, per_map in scores.items():
+                    per_run = quiet_nanmean(per_map[:, idx], 1)
+                    mean, std, low, high = mean_ci(per_run, bounded=key != "steps_to_90")
+                    row |= {f"{key}_mean": mean, f"{key}_std": std, f"{key}_ci_low": low, f"{key}_ci_high": high}
+                rows.append(row)
+    return rows
 
 
 def write_csv(path: Path, rows: list[dict]) -> None:
@@ -135,265 +198,190 @@ def write_csv(path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
-def fmt_ci(mean: float, low: float, high: float) -> str:
-    if np.isnan(low):
-        return f"{mean:.1%}"
-    return f"{mean:.1%} [{low:.1%}, {high:.1%}]"
+def read_csv(path: Path) -> list[dict]:
+    with open(path, newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def fmt_std(mean: float, std: float, fmt: str) -> str:
+    if np.isnan(mean):
+        return "—"
+    if np.isnan(std):
+        return f"{mean:{fmt}}"
+    return f"{mean:{fmt}} ± {std:{fmt}}"
+
+
+def metric_cells(row: dict) -> list[str]:
+    return [fmt_std(float(row[f"{key}_mean"]), float(row[f"{key}_std"]), fmt) for key, fmt in METRIC_FORMATS.items()]
+
+
+def table_header(columns: list[str]) -> list[str]:
+    return ["| " + " | ".join(columns) + " |", "| --- |" + " --- |" * (len(columns) - 1)]
+
+
+def overview_lines(rows: list[dict], sets: list[str]) -> list[str]:
+    lines = table_header(["Mode", *(f"{name} {s}" for s in sets for name in METRIC_NAMES)])
+    for mode in unique(r["mode"] for r in rows):
+        cells = [cell for s in sets for r in of_set(rows, s)
+                 if r["mode"] == mode and r["group"] == "all" for cell in metric_cells(r)]
+        lines.append(f"| {mode} | " + " | ".join(cells) + " |")
+    return lines
+
+
+def detail_lines(rows: list[dict]) -> list[str]:
+    lines = table_header(["Mode", "Groupe", "Runs", "Cartes", *METRIC_NAMES])
+    for r in rows:
+        cells = [r["mode"], r["group"], r["n_runs"], r["n_maps"], *metric_cells(r)]
+        lines.append("| " + " | ".join(map(str, cells)) + " |")
+    return lines
 
 
 def write_markdown(path: Path, rows: list[dict]) -> None:
-    lines = [
-        "| Mode | Groupe | Runs | Cartes | Couverture finale (IC 95 %) | Écart-type | Épisodes à 100 % (IC 95 %) |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
-    ]
-    for r in rows:
-        std = "" if np.isnan(r["coverage_std"]) else f"{r['coverage_std']:.1%}"
-        coverage = fmt_ci(r["coverage_mean"], r["coverage_ci_low"], r["coverage_ci_high"])
-        solved = fmt_ci(r["solved_rate_mean"], r["solved_rate_ci_low"], r["solved_rate_ci_high"])
-        lines.append(
-            f"| {r['mode']} | {r['group']} | {r['n_runs']} | {r['n_maps']} "
-            f"| {coverage} | {std} | {solved} |"
-        )
-    path.write_text("\n".join(lines) + "\n")
+    sets = unique(r["maps"] for r in rows)
+    lines = []
+    if len(sets) > 1:
+        lines += ["## Vue d'ensemble", "", *overview_lines(rows, sets), ""]
+    for s in sets:
+        lines += [f"## {s}", "", *detail_lines(of_set(rows, s)), ""]
+    for note in SUMMARY_NOTES:
+        lines += [note, ""]
+    path.write_text("\n".join(lines))
 
 
-def legend_handles(modes: list[str]) -> list[Line2D]:
-    return [
-        Line2D([], [], color=MODE_COLORS[m], lw=2, marker="o", ms=5, label=MODE_LABELS[m])
-        for m in modes
-    ]
+def write_summary(out: Path, episodes: list[dict]) -> None:
+    summary = summary_rows(episodes)
+    write_csv(out / "summary.csv", summary)
+    write_markdown(out / "summary.md", summary)
+
+
+def family_label(group: str) -> str:
+    return "All" if group == "all" else FAMILY_LABELS.get(group, group)
+
+
+def top_legend(fig: plt.Figure, modes: list[str]) -> None:
+    handles = [Line2D([], [], color=MODE_COLORS[m], lw=2, label=MODE_LABELS[m]) for m in modes]
+    fig.legend(handles=handles, loc="upper center", ncol=len(modes), bbox_to_anchor=(0.5, 1.0))
 
 
 def save(fig: plt.Figure, path: Path) -> None:
-    fig.savefig(path, bbox_inches="tight", pad_inches=0.25)
+    fig.savefig(path.with_suffix(".png"), bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
-
-
-def header(fig: plt.Figure, title: str, text: str, modes: list[str] | None = None) -> None:
-    height = fig.get_figheight()
-    fig.text(0.01, 1 - 0.18 / height, title, ha="left", va="top", fontsize=13, fontweight="semibold")
-    fig.text(0.01, 1 - 0.48 / height, text, ha="left", va="top", color=INK_SECONDARY, fontsize=9.5)
-    if modes:
-        fig.legend(handles=legend_handles(modes), loc="upper left", ncol=len(modes),
-                   bbox_to_anchor=(0.0, 1 - 0.68 / height), handlelength=1.6, columnspacing=1.4)
-    fig.tight_layout(rect=(0, 0, 1, 1 - (1.0 if modes else 0.75) / height))
-
-
-def runs_text(runs: list[str], episodes: int) -> str:
-    n = len(runs)
-    ci = "IC 95 % entre runs" if n > 1 else "un seul run, pas d'IC"
-    return f"Moyenne sur {n} run{'s' * (n > 1)} ({episodes} épisodes par carte) · {ci}"
 
 
 def coverage_axis(ax: plt.Axes, n_steps: int) -> None:
     ax.set_xscale("log")
     ax.set_xlim(1, n_steps - 1)
-    ticks = [t for t in (1, 10, 100, 1000) if t < n_steps]
-    ax.set_xticks(ticks, [str(t) for t in ticks])
-    ax.minorticks_off()
-    ax.set_ylim(0, 102)
-    ax.set_yticks([0, 25, 50, 75, 100])
+    ax.set_ylim(0, 100)
 
 
-def draw_coverage(ax: plt.Axes, curves: Curves, runs: list[str], idx: list[int], labels: bool) -> None:
-    ends = []
-    for mode in modes_of(curves):
-        mean, _, low, high = (v * 100 for v in mean_ci(run_curves(curves, runs, mode)[:, idx].mean(1)))
-        steps = np.arange(len(mean))
-        color = MODE_COLORS[mode]
-        if not np.isnan(low).all():
-            ax.fill_between(steps[1:], low[1:], high[1:], color=color, alpha=0.18, lw=0)
-        ax.plot(steps[1:], mean[1:], color=color, lw=2, solid_capstyle="round")
-        ends.append((mean[-1], mode))
-    if labels:
-        ends.sort()
-        previous = -10.0
-        for value, mode in ends:
-            y = max(value, previous + 7)
-            previous = y
-            ax.annotate(
-                f"{MODE_LABELS[mode]}  {value:.1f} %", xy=(1, y), xycoords=("axes fraction", "data"),
-                xytext=(6, 0), textcoords="offset points", va="center", fontsize=9.5, color=INK,
-            )
-            ax.plot([1.0], [value], marker="o", ms=5, color=MODE_COLORS[mode],
-                    transform=ax.get_yaxis_transform(), clip_on=False)
+def draw_coverage(ax: plt.Axes, curves: ModeCurves, idx: list[int]) -> None:
+    for mode, per_map in curves.items():
+        per_run = per_map[:, idx].mean(1) * 100
+        mean = per_run.mean(0)
+        steps = np.arange(1, len(mean))
+        if len(per_run) > 1:
+            std = per_run.std(0, ddof=1)
+            ax.fill_between(steps, (mean - std)[1:], (mean + std)[1:], color=MODE_COLORS[mode], alpha=0.2, lw=0)
+        ax.plot(steps, mean[1:], color=MODE_COLORS[mode], lw=1.6)
 
 
-def plot_coverage(path: Path, curves: Curves, runs: list[str], maps: list[str]) -> None:
-    n_steps = next(iter(curves.values())).shape[-1]
-    episodes = next(iter(curves.values())).shape[1]
+def n_steps_of(curves: ModeCurves) -> int:
+    return next(iter(curves.values())).shape[-1]
+
+
+def plot_coverage(path: Path, curves: ModeCurves, maps: list[str]) -> None:
     with plt.rc_context(STYLE):
-        fig, ax = plt.subplots(figsize=(9, 5))
-        draw_coverage(ax, curves, runs, list(range(len(maps))), labels=True)
-        coverage_axis(ax, n_steps)
-        ax.set_xlabel(f"pas (échelle log, jusqu'à {n_steps - 1})")
-        ax.set_ylabel("couverture (%)")
-        header(fig, "Couverture au fil de l'épisode, toutes cartes", runs_text(runs, episodes))
+        fig, ax = plt.subplots(figsize=(3.4, 2.6))
+        draw_coverage(ax, curves, list(range(len(maps))))
+        coverage_axis(ax, n_steps_of(curves))
+        ax.set_xlabel("Environment steps")
+        ax.set_ylabel("Coverage (%)")
+        top_legend(fig, list(curves))
+        fig.tight_layout(rect=(0, 0, 1, 0.9))
         save(fig, path)
 
 
-def plot_coverage_by_family(path: Path, curves: Curves, runs: list[str], maps: list[str]) -> None:
-    groups = {g: idx for g, idx in map_groups(maps).items() if g != "all"}
-    n_steps = next(iter(curves.values())).shape[-1]
-    episodes = next(iter(curves.values())).shape[1]
+def plot_coverage_by_family(path: Path, curves: ModeCurves, maps: list[str]) -> None:
+    groups = family_groups(maps)
     n_cols = min(4, len(groups))
     n_rows = -(-len(groups) // n_cols)
     with plt.rc_context(STYLE):
-        fig, axes = plt.subplots(
-            n_rows, n_cols, figsize=(3.2 * n_cols, 2.6 * n_rows + 0.8),
-            sharex=True, sharey=True, squeeze=False,
-        )
-        for ax, (group, idx) in zip(axes.flat, groups.items()):
-            draw_coverage(ax, curves, runs, idx, labels=False)
-            coverage_axis(ax, n_steps)
-            ax.set_title(f"{group}  ({len(idx)} carte{'s' * (len(idx) > 1)})", fontsize=10)
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(1.75 * n_cols, 1.6 * n_rows + 0.35),
+                                 sharex=True, sharey=True, squeeze=False)
+        panels = list(axes.flat)[:len(groups)]
+        for ax, (group, idx) in zip(panels, groups.items()):
+            draw_coverage(ax, curves, idx)
+            coverage_axis(ax, n_steps_of(curves))
+            ax.set_title(family_label(group))
         for ax in list(axes.flat)[len(groups):]:
             ax.set_visible(False)
         for ax in axes[:, 0]:
-            ax.set_ylabel("couverture (%)")
-        for ax in axes[-1]:
-            ax.set_xlabel("pas (log)")
-        header(fig, "Couverture au fil de l'épisode, par famille de cartes",
-               runs_text(runs, episodes), modes_of(curves))
+            ax.set_ylabel("Coverage (%)")
+        for ax in panels[-n_cols:]:
+            ax.xaxis.set_tick_params(labelbottom=True)
+            ax.set_xlabel("Steps")
+        top_legend(fig, list(curves))
+        fig.tight_layout(rect=(0, 0, 1, 1 - 0.3 / fig.get_figheight()))
         save(fig, path)
 
 
-def dot_panel(ax: plt.Axes, scores: dict[str, dict[str, np.ndarray]], order: list[str], title: str) -> None:
-    modes = list(next(iter(scores.values())))
-    offsets = {m: (k - (len(modes) - 1) / 2) * 0.22 for k, m in enumerate(modes)}
-    y = {g: len(order) - 1 - i for i, g in enumerate(order)}
-    for group in order:
-        for mode in modes:
-            values = scores[group][mode] * 100
-            mean, _, low, high = mean_ci(values / 100)
-            pos = y[group] + offsets[mode]
-            color = MODE_COLORS[mode]
-            if len(values) > 1:
-                ax.scatter(values, np.full(len(values), pos), s=10, color=color, alpha=0.35, lw=0, zorder=2)
-                ax.hlines(pos, low * 100, high * 100, color=color, lw=2, zorder=3)
-            ax.scatter([mean * 100], [pos], s=46, color=color, edgecolor=SURFACE, lw=1.5, zorder=4)
-            above = offsets[mode] >= 0
-            ax.annotate(f"{mean * 100:.0f}", (mean * 100, pos), xytext=(0, 6 if above else -6),
-                        textcoords="offset points", ha="center", va="bottom" if above else "top",
-                        fontsize=7.5, color=INK_SECONDARY)
-    ax.set_yticks(list(y.values()), list(y))
-    for label in ax.get_yticklabels():
-        if label.get_text() == "all":
-            label.set_fontweight("semibold")
-    ax.set_ylim(-0.7, len(order) - 0.3)
-    ax.set_xlim(-3, 108)
-    ax.set_xticks([0, 25, 50, 75, 100])
-    ax.grid(axis="y", visible=False)
-    ax.set_title(title)
-    if "all" in y:
-        ax.axhline(y["all"] - 0.5, color="#c3c2b7", lw=0.8)
-
-
-def plot_summary(path: Path, curves: Curves, runs: list[str], maps: list[str]) -> None:
-    groups = map_groups(maps)
-    episodes = next(iter(curves.values())).shape[1]
-    coverage, solved = {}, {}
-    for group, idx in groups.items():
-        coverage[group], solved[group] = {}, {}
-        for mode in modes_of(curves):
-            final = np.stack([curves[run, mode] for run in runs])[..., -1]
-            coverage[group][mode] = final.mean(2)[:, idx].mean(1)
-            solved[group][mode] = (final >= 1).mean(2)[:, idx].mean(1)
-    families = sorted((g for g in groups if g != "all"), key=lambda g: -coverage[g][modes_of(curves)[0]].mean())
-    order = ["all", *families]
+def plot_final_coverage(path: Path, scores: ModeScores, maps: list[str]) -> None:
+    groups = family_groups(maps)
+    modes = list(scores)
+    x = np.arange(len(groups))
+    width = 0.8 / len(modes)
     with plt.rc_context(STYLE):
-        fig, (ax_cov, ax_sol) = plt.subplots(
-            1, 2, figsize=(11, 0.42 * len(order) + 1.8), sharey=True
-        )
-        dot_panel(ax_cov, coverage, order, "Couverture finale (%)")
-        dot_panel(ax_sol, solved, order, "Épisodes explorés à 100 % (%)")
-        text = runs_text(runs, episodes)
-        if len(runs) > 1:
-            text += " · petits points : un run"
-        header(fig, "Résultats en fin d'épisode, par famille de cartes", text, modes_of(curves))
+        fig, ax = plt.subplots(figsize=(3.6, 2.6))
+        for k, mode in enumerate(modes):
+            per_run = np.stack([scores[mode]["coverage"][:, idx].mean(1) * 100 for idx in groups.values()])
+            std = per_run.std(1, ddof=1) if per_run.shape[1] > 1 else None
+            ax.bar(x + (k - (len(modes) - 1) / 2) * width, per_run.mean(1), width, yerr=std,
+                   color=MODE_COLORS[mode], error_kw=ERROR_KW)
+        ax.set_xticks(x, [family_label(g) for g in groups], rotation=30, ha="right")
+        ax.set_ylim(0, 105)
+        ax.grid(axis="x", visible=False)
+        ax.set_ylabel("Final coverage (%)")
+        top_legend(fig, modes)
+        fig.tight_layout(rect=(0, 0, 1, 0.9))
         save(fig, path)
 
 
-def plot_steps_to_full(path: Path, rows: list[dict], runs: list[str]) -> None:
-    modes = list(dict.fromkeys(r["mode"] for r in rows))
-    families = sorted({r["family"] for r in rows})
-    offsets = {m: (k - (len(modes) - 1) / 2) * 0.3 for k, m in enumerate(modes)}
-    with plt.rc_context(STYLE):
-        fig, ax = plt.subplots(figsize=(9, 0.45 * len(families) + 1.8))
-        for i, family in enumerate(families):
-            y = len(families) - 1 - i
-            for mode in modes:
-                group = [r for r in rows if r["family"] == family and r["mode"] == mode]
-                steps = np.array([r["steps_to_full"] for r in group if r["solved"]], dtype=float)
-                pos = y + offsets[mode]
-                color = MODE_COLORS[mode]
-                label = f"{len(steps)}/{len(group)}"
-                if len(steps):
-                    q5, q25, q50, q75, q95 = np.percentile(steps, [5, 25, 50, 75, 95])
-                    ax.hlines(pos, q5, q95, color=color, lw=1, alpha=0.7)
-                    ax.hlines(pos, q25, q75, color=color, lw=6, alpha=0.85, capstyle="round")
-                    ax.scatter([q50], [pos], s=26, color=SURFACE, edgecolor=color, lw=1.5, zorder=3)
-                    ax.annotate(label, (q95, pos), xytext=(6, 0), textcoords="offset points",
-                                va="center", fontsize=7.5, color=INK_MUTED)
-                else:
-                    ax.annotate(f"aucun épisode à 100 % ({label})", (1, pos), xytext=(4, 0),
-                                textcoords="offset points", va="center", fontsize=7.5, color=INK_MUTED)
-        ax.set_xscale("log")
-        ax.minorticks_off()
-        ticks = [1, 10, 30, 100, 300, 1000, 2000]
-        ax.set_xticks(ticks, [str(t) for t in ticks])
-        ax.set_xlim(1, 2500)
-        ax.set_yticks(range(len(families)), families[::-1])
-        ax.set_ylim(-0.7, len(families) - 0.3)
-        ax.grid(axis="y", visible=False)
-        ax.set_xlabel("pas pour atteindre 100 % (log)")
-        header(fig, "Vitesse d'exploration complète",
-               "Épisodes résolus · barre : 25-75 %, trait : 5-95 %, rond : médiane · n résolus / total",
-               modes)
-        save(fig, path)
+def write_plots(out: Path, episodes: list[dict], per_map: list[dict]) -> None:
+    for s in unique(r["maps"] for r in episodes):
+        set_episodes = of_set(episodes, s)
+        runs = unique(r["run"] for r in set_episodes)
+        maps = unique(r["map"] for r in set_episodes)
+        modes = unique(r["mode"] for r in set_episodes)
+        coverage = index_rows(of_set(per_map, s), "coverage")
+        curves = {mode: np.array([[coverage[mode, run, name] for name in maps] for run in runs]) for mode in modes}
+        scores = {mode: map_scores(set_episodes, runs, maps, mode) for mode in modes}
+
+        plots = out / "plots" / s
+        plots.mkdir(parents=True, exist_ok=True)
+        plot_coverage(plots / "coverage", curves, maps)
+        plot_coverage_by_family(plots / "coverage_by_family", curves, maps)
+        plot_final_coverage(plots / "final_coverage", scores, maps)
 
 
-def plot_map_heatmap(path: Path, curves: Curves, runs: list[str], maps: list[str]) -> None:
-    modes = modes_of(curves)
-    order = sorted(range(len(maps)), key=lambda m: (map_family(maps[m]), maps[m]))
-    values = np.array([
-        [np.stack([curves[run, mode][m, :, -1] for run in runs]).mean() * 100 for mode in modes]
-        for m in order
-    ])
-    with plt.rc_context(STYLE):
-        fig, ax = plt.subplots(figsize=(4.6, 0.36 * len(order) + 1.6))
-        ax.imshow(values, cmap="Blues", vmin=0, vmax=100, aspect="auto")
-        for i in range(values.shape[0]):
-            for j in range(values.shape[1]):
-                v = values[i, j]
-                ax.text(j, i, f"{v:.0f}", ha="center", va="center", fontsize=8.5,
-                        color="white" if v > 60 else INK)
-        ax.set_xticks(range(len(modes)), [MODE_LABELS[m] for m in modes])
-        ax.xaxis.tick_top()
-        ax.set_yticks(range(len(order)), [Path(maps[m]).stem for m in order], fontsize=8.5)
-        ax.grid(False)
-        for spine in ax.spines.values():
-            spine.set_visible(False)
-        for i in range(1, len(order)):
-            if map_family(maps[order[i]]) != map_family(maps[order[i - 1]]):
-                ax.axhline(i - 0.5, color=SURFACE, lw=3)
-        header(fig, "Couverture finale par carte (%)", f"Moyenne sur {len(runs)} run{'s' * (len(runs) > 1)}")
-        save(fig, path)
+def write_report(out: Path, curves: Curves, lengths: Curves, runs: list[str], maps: list[str]) -> None:
+    episodes, per_map, coverage_curve = [], [], []
+    for s, (set_curves, set_lengths, set_maps) in split_by_set(curves, lengths, maps).items():
+        episodes += [{"maps": s, **r} for r in episode_rows(set_curves, set_lengths, set_maps)]
+        per_map += [{"maps": s, **r} for r in per_map_rows(set_curves, set_maps)]
+        coverage_curve += [{"maps": s, **r} for r in curve_rows(set_curves, runs, set_maps)]
 
-
-def write_report(out: Path, curves: Curves, runs: list[str], maps: list[str]) -> None:
-    episodes = episode_rows(curves, maps)
-    summary, curve_rows = summary_and_curve_rows(curves, runs, maps)
     write_csv(out / "episodes.csv", episodes)
-    write_csv(out / "coverage_per_map.csv", per_map_rows(curves, maps))
-    write_csv(out / "summary.csv", summary)
-    write_csv(out / "coverage_curve.csv", curve_rows)
-    write_markdown(out / "summary.md", summary)
+    write_csv(out / "coverage_per_map.csv", per_map)
+    write_csv(out / "coverage_curve.csv", coverage_curve)
+    write_summary(out, episodes)
+    write_plots(out, episodes, per_map)
 
-    plots = out / "plots"
-    plots.mkdir(exist_ok=True)
-    plot_coverage(plots / "coverage.png", curves, runs, maps)
-    plot_coverage_by_family(plots / "coverage_by_family.png", curves, runs, maps)
-    plot_summary(plots / "summary.png", curves, runs, maps)
-    plot_steps_to_full(plots / "steps_to_full.png", episodes, runs)
-    plot_map_heatmap(plots / "coverage_per_map.png", curves, runs, maps)
+
+if __name__ == "__main__":
+    import sys
+
+    for folder in map(Path, sys.argv[1:]):
+        episodes = read_csv(folder / "episodes.csv")
+        write_summary(folder, episodes)
+        write_plots(folder, episodes, read_csv(folder / "coverage_per_map.csv"))
+        print(folder)
