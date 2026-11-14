@@ -59,6 +59,6 @@ All state is batched tensors of shape `(num_envs, ...)`, with per-agent data und
 
 ## Research conventions
 
-- Maps live in `envs/small_maps/` (15x15, training defaults) and `envs/big_maps/`, each split into `train/`, `val/` and `test/`. `train/` is for training, `val/` for tuning and evaluation during training. `test/` is for final evaluation only and must never be used to tune anything.
+- Maps live in `envs/small_maps/` (all 15x15, training defaults) and `envs/big_maps/` (all 50x50), each split into `train/`, `val/` and `test/`, with the same families in both sets (test files have the same names). Keep every map of a set at the set's size. `train/` is for training, `val/` for tuning and evaluation during training. `test/` is for final evaluation only and must never be used to tune anything.
 - The key metric is `coverage_at_episode_end` (`eval/coverage_at_episode_end` on the validation maps).
 - `runs/` is gitignored. Runs of one experiment go in `runs/<experiment>/` (`train.py --experiment`), with the evaluation in `runs/<experiment>/evaluation/`.

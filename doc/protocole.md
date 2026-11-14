@@ -28,11 +28,13 @@ Budget d'entraînement	5 120 000 frames par run (--frames 5120000), identique po
 
 ### 2.2 Données
 
-| Ensemble | Cartes | Usage |
+Deux jeux de cartes, *small_maps* (toutes en 15x15) et *big_maps* (toutes en 50x50), avec les mêmes familles et le même découpage :
+
+| Ensemble | Cartes (*small* / *big*) | Usage |
 | --- | --- | --- |
-| *envs/train/* | 73 | entraînement |
-| *envs/val/* | 14 | réglage des hyperparamètres et choix entre variantes |
-| *envs/test/* | 16 | évaluation finale, une seule fois, aucun réglage |
+| *train* | 70 / 72 | entraînement |
+| *val* | 14 / 14 | réglage des hyperparamètres et choix entre variantes |
+| *test* | 15 / 15 | évaluation finale, une seule fois, aucun réglage. Les 7 familles de *train* et 8 familles jamais vues, une carte chacune |
 
 
 

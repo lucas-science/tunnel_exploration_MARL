@@ -6,14 +6,16 @@ The environment is a vectorised TorchRL env: it simulates many episodes at once.
 
 ## Maps
 
-| Folder | Maps | Usage |
+Two map sets, `envs/small_maps/` (every map 15×15, used for training by default) and `envs/big_maps/` (every map 50×50), with the same families and the same splits:
+
+| Folder | Maps (small / big) | Usage |
 | --- | --- | --- |
-| `envs/train/` | 73 | training |
-| `envs/val/` | 14 (2 per train family) | evaluation during training, hyperparameter and reward tuning |
-| `envs/test/` | 16 | final evaluation only, never used to tune anything. Mixes train families and unseen ones (spiral, binary tree, 100×100, ...) |
+| `<set>/train/` | 70 / 72 | training |
+| `<set>/val/` | 14 / 14 (2 per train family) | evaluation during training, hyperparameter and reward tuning |
+| `<set>/test/` | 15 / 15 | final evaluation only, never used to tune anything. The 7 train families plus 8 unseen ones (spiral, binary tree, tiny dead end, ...), one map each, with the same file names in both sets |
 | `envs/old_envs/` | 6 | first hand-made maps |
 
-`envs/catalog.csv` describes every map and its set.
+`<set>/catalog.csv` describes every map and its split.
 
 ## What each network sees
 
