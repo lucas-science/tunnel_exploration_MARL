@@ -1,0 +1,90 @@
+\documentclass[aspectratio=169,11pt]{beamer}
+\usetheme[progressbar=frametitle,numbering=fraction]{metropolis}
+
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta}
+
+\graphicspath{{figures/}}
+
+\setbeamertemplate{section in toc}[sections numbered]
+\setbeamertemplate{section page}{
+  \centering
+  \begin{minipage}{22em}
+    \raggedright
+    \usebeamercolor[fg]{section title}
+    \usebeamerfont{section title}
+    \insertsectionnumber.~\insertsectionhead\\[-1ex]
+    \usebeamertemplate*{progress bar in section page}
+    \par
+  \end{minipage}
+  \par
+  \vspace{\baselineskip}
+}
+
+\title{Point d'étape n\textsuperscript{o}\,N}
+\subtitle{Exploration de tunnels par une flotte de drones (MARL)}
+\author{Lucas L'HOMME}
+\date{Mois Année}
+
+\begin{document}
+
+\maketitle
+
+\begin{frame}{Au programme}
+  \tableofcontents[hideallsubsections]
+\end{frame}
+
+\section{Section}
+
+\begin{frame}{Titre qui donne le message}
+  \begin{itemize}
+    \item Une idée par ligne
+    \item Phrase courte, sans point final
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Figure et texte côte à côte}
+  \begin{columns}[c]
+    \column{0.52\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{figure}
+
+    \column{0.46\textwidth}
+    \small
+    \begin{itemize}
+      \item Ce que montre la figure
+      \item Ce qu'il faut en retenir
+    \end{itemize}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Figure pleine page}
+  \centering
+  \includegraphics[height=0.84\textheight]{figure}
+\end{frame}
+
+\begin{frame}{Tableau}
+  \centering
+  \begin{tabular}{lrl}
+    \toprule
+    Colonne & Valeur & Rôle \\
+    \midrule
+    a & 1 & ... \\
+    \bottomrule
+  \end{tabular}
+\end{frame}
+
+\section{Conclusion}
+
+\begin{frame}{Suite du travail}
+  \begin{enumerate}
+    \item Prochaine étape
+    \item Question ouverte ?
+  \end{enumerate}
+\end{frame}
+
+\end{document}
