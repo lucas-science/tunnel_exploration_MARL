@@ -90,13 +90,14 @@ De plus, les agents seront capable de remarquer la présence d'un agent dans une
 
 | Condition | Définition |
 | --- | --- |
-| Sans communication (meilleure condition de Q1) | politique réactive sans signal, référence basse |
-| Signaux + MLP | politique réactive qui émet et reçoit des signaux |
+| Signaux $\in$ *m* | politique réactive qui émet et reçoit des signaux |
+|Signaux $\in$ *m* + vision sur les futures intersections|politique réactive qui émet et reçoit des signaux, avec des agents qui voient lesfutures intersection dans une direction|
 
-**Baselines de comparaison.** Algorithmes non appris de *algo/*, avec mémoire de la carte.
+**Baselines de comparaison.**
 
 | Baseline | Définition |
 | --- | --- |
+| Sans communication (meilleure condition de Q1) | politique réactive sans signal, référence basse |
 | Frontières, carte individuelle (*frontier*) | chaque drone garde la carte de ce qu'il a vu et se dirige vers la frontière (case connue voisine d'une case inconnue) la plus proche |
 | Frontières, carte partagée (*frontier_shared*) | même algorithme, avec une carte commune à tous les drones |
 
@@ -107,10 +108,9 @@ De plus, les agents seront capable de remarquer la présence d'un agent dans une
 | Nombre d'états du signal *m* | 2, 4, 6 | un entraînement séparé par valeur, car *m* fixe la taille des entrées et des sorties du réseau. La meilleure valeur sur *val* est seule comparée aux autres conditions sur *test*, les autres servent à la courbe de performance en fonction de *m* |
 
 **Implémentation prévue**
-
 - **Signaux :** chaque drone émet à chaque pas un signal parmi *m* états possibles, reçu par les autres au pas suivant, avec *m* valant 2, 4 ou 6 L'espace d'actions passe à 5 (nombre de déplacement possibles) × *m*.
 - **Baselines à carte :** non apprises, elles utilisent toute la carte connue, sans fenêtre. Elles partent du même point, avec la même vue, les mêmes déplacements et les mêmes règles de collision que les drones RL.
-- **Canal :** parfait mais de portée limitée : un signal n'est reçu que par les drones situés à *r* cases au plus de l'émetteur (distance de Manhattan). *r* est fixé avant les expériences et.
+- **Canal :** parfait mais de portée limitée : un signal n'est reçu que par les drones situés à *r* cases. Le nombre de case sera compté en terme de propagation dans le tunnel réel. On ajoutera un affaiblissement du signal sur les tunnels formant un angle droit. 
 
 **Critère de décision.** Les signaux rivalisent avec le partage de carte si leur retard de couverture finale reste sous 5 points sur tout l'intervalle de confiance à 95 %. Une absence de différence significative ne suffit pas, et l'ablation doit montrer que les signaux sont vraiment utilisés.
 
