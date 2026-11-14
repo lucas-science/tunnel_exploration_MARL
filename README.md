@@ -63,6 +63,8 @@ run crash at the end, before the final checkpoint.
 | `--sampling-device` | `cpu` | `cuda` runs the env and the collection on GPU; worth it from ~1024 envs |
 | `--eval-interval` | 120 000 | evaluate every N frames (deterministic policy, logged as `eval/coverage_at_episode_end`); must be a multiple of `--frames-per-batch` |
 | `--checkpoint-interval` | 0 | save every N frames (multiple of `--frames-per-batch`) |
+| `--seed` | 0 | one or more seeds; one run per seed, named `..._seed<N>` |
+| `--experiment` | empty | subfolder of `runs/` to save the run in, e.g. `Experience1` |
 | `--loggers` | `csv tensorboard` | also `wandb` (needs `pip install wandb` + `wandb login`) |
 
 Results go to `runs/<run>/`: one CSV per metric (the key one is
@@ -77,26 +79,76 @@ pip install tensorboard   # once
 tensorboard --logdir runs # Open http://localhost:6006. 
 ```
 
-## Visualise a trained policy
+## Evaluate an experiment
+
+Put the runs of one experiment in the same folder, one training seed per run:
 
 ```bash
-python -m visualize runs/<run> --map old_envs/env_cross.csv
+python -m train --experiment Experience1 --seed 0 1 2 3 4   # one run per seed, one after the other
+python -m evaluate runs/Experience1 --maps small_maps/val big_maps/val
 ```
 
-Writes `runs/<run>/policy_<map>.gif` (map + coverage curve).
+Each run is played in two modes, `greedy` (most likely action) and `stochastic`
+(sampled action). An episode ends when every reachable cell is explored, or when no new cell is found for
+`--patience` × the map diameter steps (`--max-steps` is only a safety cap). Coverage is
+measured on the cells reachable from the start. Results go to
+`runs/Experience1/evaluation/` (or `runs/<run>/evaluation/` when given a single run):
+
+Results are split by map set (`small_maps`, `big_maps`: the first folder of the map path), since a policy can behave very differently on larger maps.
+
+| File | Content |
+| --- | --- |
+| `summary.md` / `summary.csv` | an overview with the three metrics of each map set side by side, then for each set, per mode, over all maps then per map family: final coverage, share of episodes reaching 100 % and 90 %, and steps to reach 90 % coverage (exploration speed, averaged over the episodes that reach 90 %) |
+| `coverage_curve.csv` | mean coverage per step per mode and group, with its 95 % CI |
+| `coverage_per_map.csv` | mean coverage per step for each run, mode and map |
+| `episodes.csv` | length, final coverage, solved flag, steps to 100 % and steps to 90 % (empty if never reached) of every episode |
+| `plots/<set>/coverage.png` | mean coverage per step over all maps, mean ± std band over runs, log step axis |
+| `plots/<set>/coverage_by_family.png` | the same curve, one panel per map family |
+| `plots/<set>/final_coverage.png` | final coverage per map family and mode, bars with ± std over runs |
+| `<run>/evaluation/animation/<set>/<family>/<map>_<mode>.gif` | one per family and mode of the `--gif-maps` sets (first episode of the family's first map): map, drone trails and coverage curve, cut 10 steps after the last discovery |
+
+Each run is first averaged per map, then over the maps of a group. Tables show the mean ± standard deviation over runs (`summary.csv` also keeps the Student 95 % CI, used by the plots).
+`python -m report runs/<experiment>/evaluation` rebuilds `summary.md` / `summary.csv` from `episodes.csv` without re-running the episodes. With a single run (an experiment folder holding one run, or a run folder), the std and CI are left empty.
 
 | Option | Default | |
 | --- | --- | --- |
-| `--map` | random among the run's maps | maps or folders to replay, relative to `envs/`, can be unseen during training. One GIF per map |
-| `--stochastic` | off | sample actions from the policy probabilities, as during training, instead of taking the most likely one |
-| `--seed` | random (printed) | replay the same episode |
-| `--live` | off | open a window instead of writing a GIF |
-| `--output` | `runs/<run>/policy_<map>.gif` | GIF path |
-| `--fps` | 10 | GIF speed |
+| `--maps` | `small_maps/val big_maps/val` | maps or folders, relative to `envs/`. Use `test` maps only for the final evaluation |
+| `--episodes` | 30 | episodes per map and per run |
+| `--patience` | 2 | an episode stops after `patience` × map diameter steps without discovering a cell |
+| `--max-steps` | 10000 | safety cap on the episode length |
+| `--seed` | 0 | the same seed for every run, so all runs start from the same initial headings |
+| `--fps` | 5 | GIF speed |
+| `--no-gif` | off | skip the GIFs. Otherwise they are written for the first run only (seed 0) |
+| `--gif-maps` | `small_maps` | map sets that get GIFs (one per family and mode) |
+| `--workers` | 8 | parallel processes. Each (run, mode) pair is split into chunks of maps so that a single run or a baseline also uses every worker; the GIFs are rendered in the same pool |
 
-All drones start on the same cell with the same observation, so without
-`--stochastic` they move together as one. Comparing both modes shows whether the
-policy really spreads the drones or relies on randomness to do it.
+## Evaluate a baseline algorithm
+
+`evaluate.py` also takes the name of a non-learned algorithm from `algo/` instead of a folder:
+
+```bash
+python -m evaluate tremaux --n-agents 4   # writes runs/Baseline_tremaux/evaluation/
+```
+
+The algorithm plays the same maps, episodes, seed, collisions and coverage measure as the policies, in a single mode `baseline`, and produces the same files (GIFs in `evaluation/animation/`).
+A drone whose move was blocked by another drone takes a random legal move with probability 0.5, so that two drones facing each other in a corridor do not stay stuck.
+
+| Algorithm | Behaviour |
+| --- | --- |
+| `random` | uniform legal move, `stay` only when no move is possible (Q1 reference) |
+| `random_forward` | goes forward whenever it can, otherwise left or right at random, and back only in a dead end |
+| `left_hand` / `right_hand` | goes straight until it touches a wall, then keeps it on its left (right) |
+| `tremaux` | Trémaux: marks each passage it takes, turns back when it reaches an already visited cell through a new passage, otherwise takes the least marked passage. Each drone keeps its own marks |
+| `tremaux_shared` | the same with marks shared by the whole fleet |
+| `frontier` | goes to the nearest known cell it has not visited, along known cells; each drone only knows what it has seen with its 4 rays (Q2 individual map baseline) |
+| `frontier_shared` | the same with a map shared by the whole fleet (Q2 shared map baseline) |
+
+| Option | Default | |
+| --- | --- | --- |
+| `--n-agents` / `--view-range` | 4 / 3 | environment of the algorithm |
+| `--experiment` | `Baseline_<algo>` | output folder in `runs/` |
+
+To add an algorithm, subclass `algo.base.Algorithm`: `reset()` initialises its memory after the environment reset, `decide(td)` returns one action per drone (`(num_envs, n_agents)`, same egocentric actions as the policies) and can read the environment through `self.env`. Then register it in `ALGORITHMS` in `algo/__init__.py`.
 
 ## Play the environment by hand
 
@@ -127,4 +179,6 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest
 | `tunnel_env.py` | Vectorised TorchRL environment |
 | `benchmarl_task.py` | Plugs the environment into BenchMARL |
 | `train.py` | Training script |
-| `visualize.py` | Replay a checkpoint as a GIF |
+| `evaluate.py` | Evaluate the runs of an experiment or a baseline algorithm, with GIFs |
+| `algo/` | Non-learned baseline algorithms (random, wall following, Trémaux, frontiers) |
+| `report.py` | CSV, summary and plots of an evaluation |
